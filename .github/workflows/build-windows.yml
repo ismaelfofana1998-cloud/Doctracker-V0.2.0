@@ -1,0 +1,192 @@
+name: Build Doctracker
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    env:
+      MSBUILDDISABLENODEREUSE: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Ensure Office and VSTO build tools
+        shell: pwsh
+        run: |
+          $installationPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
+          & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe" modify `
+            --installPath "$installationPath" `
+            --add Microsoft.VisualStudio.Workload.Office `
+            --includeRecommended --quiet --norestart --force
+          if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 3010) { exit $LASTEXITCODE }
+
+      - name: Download local OCR assets
+        shell: cmd
+        run: scripts\prepare-assets.cmd
+
+      - name: Locate MSBuild
+        uses: microsoft/setup-msbuild@v3
+        with:
+          msbuild-architecture: x86
+
+      - name: Restore
+        run: msbuild Doctracker.sln /t:Restore /p:RestorePackagesConfig=true
+
+      - name: Test core
+        run: dotnet test tests/Doctracker.Core.Tests/Doctracker.Core.Tests.csproj --framework net48 --configuration Release --no-restore --collect:"XPlat Code Coverage"
+
+      - name: Verify VSTO-compatible core target
+        shell: pwsh
+        run: |
+          $coreAssembly = Join-Path $env:GITHUB_WORKSPACE "src\Doctracker.Core\bin\Release\net48\Doctracker.Core.dll"
+          if (-not (Test-Path $coreAssembly)) {
+            throw "Doctracker.Core.dll net48 est absent. Le moteur doit cibler .NET Framework 4.8 pour rester compatible avec la tâche VSTO FindRibbons."
+          }
+
+      - name: Create temporary manifest certificate
+        id: certificate
+        shell: pwsh
+        run: |
+          $certificate = New-SelfSignedCertificate `
+            -Type CodeSigningCert `
+            -Subject "CN=Doctracker Development" `
+            -CertStoreLocation "Cert:\CurrentUser\My" `
+            -KeyAlgorithm RSA `
+            -KeyLength 2048 `
+            -HashAlgorithm SHA256 `
+            -KeyExportPolicy NonExportable `
+            -NotAfter (Get-Date).AddDays(30)
+          "thumbprint=$($certificate.Thumbprint)" >> $env:GITHUB_OUTPUT
+
+      - name: Build add-in
+        shell: pwsh
+        run: |
+          $thumbprint = "${{ steps.certificate.outputs.thumbprint }}"
+          & msbuild src/Doctracker.AddIn/Doctracker.AddIn.csproj `
+            /m:1 `
+            /nr:false `
+            /t:Build `
+            /p:Configuration=Release `
+            /p:SignManifests=true `
+            /p:ManifestCertificateThumbprint=$thumbprint `
+            /p:CertificateThumbprint=$thumbprint
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Publish ClickOnce installer
+        shell: pwsh
+        run: |
+          $thumbprint = "${{ steps.certificate.outputs.thumbprint }}"
+          $publishDirectory = Join-Path $env:GITHUB_WORKSPACE "artifacts\installer"
+          & msbuild src/Doctracker.AddIn/Doctracker.AddIn.csproj `
+            /m:1 `
+            /nr:false `
+            /t:Publish `
+            /p:Configuration=Release `
+            /p:SignManifests=true `
+            /p:ManifestCertificateThumbprint=$thumbprint `
+            /p:CertificateThumbprint=$thumbprint `
+            "/p:PublishDir=$publishDirectory\"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Package development trust certificate
+        shell: pwsh
+        run: |
+          $thumbprint = "${{ steps.certificate.outputs.thumbprint }}"
+          $publishDirectory = Join-Path $env:GITHUB_WORKSPACE "artifacts\installer"
+          $certificate = Get-Item "Cert:\CurrentUser\My\$thumbprint"
+          Export-Certificate `
+            -Cert $certificate `
+            -FilePath (Join-Path $publishDirectory "Doctracker-Development.cer") `
+            -Type CERT | Out-Null
+          Copy-Item `
+            -Path (Join-Path $env:GITHUB_WORKSPACE "installer\*") `
+            -Destination $publishDirectory `
+            -Force
+
+      - name: Verify installer contents
+        shell: pwsh
+        run: |
+          $thumbprint = "${{ steps.certificate.outputs.thumbprint }}"
+          $root = Join-Path $env:GITHUB_WORKSPACE "artifacts\installer"
+          $checks = @(
+            @{ Label = "setup.exe"; Minimum = 1; Files = @(Get-ChildItem $root -Recurse -File -Filter "setup.exe") },
+            @{ Label = "certificat public"; Minimum = 1; Files = @(Get-ChildItem $root -Recurse -File -Filter "Doctracker-Development.cer") },
+            @{ Label = "assistant d'installation CMD"; Minimum = 1; Files = @(Get-ChildItem $root -Recurse -File -Filter "Install-Doctracker.cmd") },
+            @{ Label = "assistant d'installation PowerShell"; Minimum = 1; Files = @(Get-ChildItem $root -Recurse -File -Filter "Install-Doctracker.ps1") },
+            @{ Label = "manifest .vsto"; Minimum = 1; Files = @(Get-ChildItem $root -Recurse -File -Filter "*.vsto") },
+            @{ Label = "manifest applicatif"; Minimum = 1; Files = @(Get-ChildItem $root -Recurse -File -Filter "*.dll.manifest*") },
+            @{ Label = "Doctracker.AddIn.dll"; Minimum = 1; Files = @(Get-ChildItem $root -Recurse -File -Filter "Doctracker.AddIn.dll*") },
+            @{ Label = "fra.traineddata"; Minimum = 1; Files = @(Get-ChildItem $root -Recurse -File -Filter "fra.traineddata*") },
+            @{ Label = "eng.traineddata"; Minimum = 1; Files = @(Get-ChildItem $root -Recurse -File -Filter "eng.traineddata*") },
+            @{ Label = "pdfium.dll x86"; Minimum = 1; Files = @(Get-ChildItem $root -Recurse -File -Filter "pdfium.dll*" | Where-Object { $_.FullName -match '[\\/]x86[\\/]' }) },
+            @{ Label = "pdfium.dll x64"; Minimum = 1; Files = @(Get-ChildItem $root -Recurse -File -Filter "pdfium.dll*" | Where-Object { $_.FullName -match '[\\/]x64[\\/]' }) },
+            @{ Label = "tesseract50.dll x86/x64"; Minimum = 2; Files = @(Get-ChildItem $root -Recurse -File -Filter "tesseract50.dll*") },
+            @{ Label = "leptonica native DLL x86/x64"; Minimum = 2; Files = @(Get-ChildItem $root -Recurse -File -Filter "*leptonica*.dll*") }
+          )
+          $missing = @($checks | Where-Object { $_.Files.Count -lt $_.Minimum } | ForEach-Object { $_.Label })
+          if ($missing.Count -gt 0) {
+            throw "Installateur incomplet. Fichier(s) absent(s) : $($missing -join ', ')"
+          }
+          $applicationManifest = Get-ChildItem $root -Recurse -File -Filter "*.dll.manifest*" |
+            Select-Object -First 1
+          $manifestText = [System.IO.File]::ReadAllText($applicationManifest.FullName).Replace("/", "\")
+          foreach ($architecture in @("x86", "x64")) {
+            if ($manifestText -notmatch "$architecture\\pdfium\.dll(?:\.deploy)?") {
+              throw "Le manifeste ClickOnce ne référence pas $architecture\pdfium.dll."
+            }
+          }
+          $setup = (Get-ChildItem $root -Recurse -File -Filter "setup.exe" | Select-Object -First 1).FullName
+          $signature = Get-AuthenticodeSignature $setup
+          if ($null -eq $signature.SignerCertificate) {
+            throw "setup.exe n'est pas signé."
+          }
+          $publicCertificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2(
+            (Join-Path $root "Doctracker-Development.cer")
+          )
+          if ($publicCertificate.HasPrivateKey) {
+            throw "Le certificat exporté contient une clé privée."
+          }
+          if ($publicCertificate.Thumbprint -ne $thumbprint) {
+            throw "Le certificat public ne correspond pas au certificat de compilation."
+          }
+          if ($signature.SignerCertificate.Thumbprint -ne $thumbprint) {
+            throw "La signature de setup.exe ne correspond pas au certificat public livré."
+          }
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Doctracker-Windows-Installer
+          path: artifacts/installer/**
+          if-no-files-found: error
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: Doctracker-Windows-Binaries
+          path: src/Doctracker.AddIn/bin/Release/**
+          if-no-files-found: error
+
+      - name: Remove temporary manifest certificate
+        if: always() && steps.certificate.outcome == 'success'
+        shell: pwsh
+        run: |
+          $thumbprint = "${{ steps.certificate.outputs.thumbprint }}"
+          if ($thumbprint) {
+            Remove-Item "Cert:\CurrentUser\My\$thumbprint" -ErrorAction SilentlyContinue
+          }
