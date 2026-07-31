@@ -1,0 +1,261 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" Condition="false" />
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{71B8C12F-64F7-4806-98BC-7C91CA73EC1B}</ProjectGuid>
+    <OutputType>Library</OutputType>
+    <RootNamespace>Doctracker.AddIn</RootNamespace>
+    <AssemblyName>Doctracker.AddIn</AssemblyName>
+    <ProductName>Doctracker</ProductName>
+    <PublisherName>Doctracker</PublisherName>
+    <FriendlyName>Doctracker</FriendlyName>
+    <OfficeApplicationDescription>Traçabilité documentaire locale pour Excel</OfficeApplicationDescription>
+    <NoStandardLibraries>false</NoStandardLibraries>
+    <LoadBehavior>3</LoadBehavior>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <RestoreProjectStyle>PackageReference</RestoreProjectStyle>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <GenerateBindingRedirectsOutputType>true</GenerateBindingRedirectsOutputType>
+    <DefineConstants>VSTO40</DefineConstants>
+    <FileAlignment>512</FileAlignment>
+    <ProjectTypeGuids>{BAA0C2D2-18E2-41B9-852F-F413020CAA33};{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}</ProjectTypeGuids>
+    <OfficeApplication>Excel</OfficeApplication>
+    <OfficeVersion>16.0</OfficeVersion>
+    <VSTO_TrustAssembliesLocation>true</VSTO_TrustAssembliesLocation>
+    <SignManifests>true</SignManifests>
+    <GenerateManifests>true</GenerateManifests>
+    <PublishUrl>publish\</PublishUrl>
+    <InstallUrl />
+    <IsWebBootstrapper>false</IsWebBootstrapper>
+    <UpdateEnabled>false</UpdateEnabled>
+    <TargetCulture>fr-FR</TargetCulture>
+    <FallbackCulture>en-US</FallbackCulture>
+    <ApplicationVersion>0.2.0.0</ApplicationVersion>
+    <ApplicationRevision>0</ApplicationRevision>
+    <BootstrapperEnabled>true</BootstrapperEnabled>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Data" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Xml" />
+    <Reference Include="System.Xml.Linq" />
+    <Reference Include="Microsoft.CSharp" />
+    <Reference Include="Microsoft.Office.Tools.v4.0.Framework">
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Microsoft.VisualStudio.Tools.Applications.Runtime">
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Microsoft.Office.Tools">
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Microsoft.Office.Tools.Common">
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Microsoft.Office.Tools.Common.v4.0.Utilities">
+      <!--
+        FindRibbons reloads the compiled add-in in an isolated AppDomain.
+        Unlike the VSTO runtime assemblies in the GAC, this utilities assembly
+        must be available next to Doctracker.AddIn.dll during that inspection.
+      -->
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="Microsoft.Office.Tools.Excel">
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Microsoft.Office.Tools.Excel.v4.0.Utilities">
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Microsoft.Office.Interop.Excel">
+      <EmbedInteropTypes>true</EmbedInteropTypes>
+    </Reference>
+    <Reference Include="Office">
+      <EmbedInteropTypes>true</EmbedInteropTypes>
+    </Reference>
+    <Reference Include="stdole">
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="ThisAddIn.cs" />
+    <Compile Include="ThisAddIn.Designer.cs">
+      <DependentUpon>ThisAddIn.Designer.xml</DependentUpon>
+      <AutoGen>True</AutoGen>
+      <DesignTime>True</DesignTime>
+    </Compile>
+    <Compile Include="Ribbon\DoctrackerRibbon.cs" />
+    <Compile Include="Excel\ExcelCellGateway.cs" />
+    <Compile Include="Infrastructure\WorkbookProjectContext.cs" />
+    <Compile Include="Infrastructure\TesseractOcrEngine.cs" />
+    <Compile Include="Infrastructure\DocumentIndexer.cs" />
+    <Compile Include="Infrastructure\NativePdfiumLoader.cs" />
+    <Compile Include="UI\DocumentCanvas.cs" />
+    <Compile Include="UI\DoctrackerPaneControl.cs" />
+    <Compile Include="UI\PaneController.cs" />
+    <Compile Include="UI\ReviewDialog.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="ThisAddIn.Designer.xml">
+      <DependentUpon>ThisAddIn.cs</DependentUpon>
+    </None>
+    <None Include="app.config" />
+    <None Include="tessdata\README.md" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Doctracker.Core\Doctracker.Core.csproj">
+      <Project>{8F2E24AB-21F1-4CE0-8A12-97D1D4F8800A}</Project>
+      <Name>Doctracker.Core</Name>
+    </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="PdfiumViewer" Version="2.13.0" />
+    <PackageReference Include="PdfiumViewer.Native.x86_64.v8-xfa" Version="2018.4.8.256" />
+    <PackageReference Include="PdfiumViewer.Native.x86.v8-xfa" Version="2018.4.8.256" />
+    <PackageReference Include="Tesseract" Version="5.2.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <BootstrapperPackage Include=".NETFramework,Version=v4.8">
+      <Visible>False</Visible>
+      <ProductName>Microsoft .NET Framework 4.8</ProductName>
+      <Install>true</Install>
+    </BootstrapperPackage>
+    <BootstrapperPackage Include="Microsoft.VSTORuntime.4.0">
+      <Visible>False</Visible>
+      <ProductName>Microsoft Visual Studio 2010 Tools for Office Runtime (x86 and x64)</ProductName>
+      <Install>true</Install>
+    </BootstrapperPackage>
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+  <PropertyGroup>
+    <VisualStudioVersion Condition="'$(VisualStudioVersion)' == ''">17.0</VisualStudioVersion>
+    <VSToolsPath Condition="'$(VSToolsPath)' == ''">$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)</VSToolsPath>
+  </PropertyGroup>
+  <Import Project="$(VSToolsPath)\OfficeTools\Microsoft.VisualStudio.Tools.Office.targets"
+          Condition="Exists('$(VSToolsPath)\OfficeTools\Microsoft.VisualStudio.Tools.Office.targets')" />
+  <Target Name="FailWhenOfficeBuildToolsAreMissing"
+          BeforeTargets="Build"
+          Condition="!Exists('$(VSToolsPath)\OfficeTools\Microsoft.VisualStudio.Tools.Office.targets')">
+    <Error Text="Les outils de build VSTO sont absents. Installez la charge Visual Studio 'Développement Office/SharePoint'." />
+  </Target>
+  <Target Name="VerifyFindRibbonsDependencies"
+          BeforeTargets="VisualStudioForApplicationsBuild"
+          AfterTargets="CopyFilesToOutputDirectory">
+    <Error
+      Condition="!Exists('$(TargetDir)Microsoft.Office.Tools.Common.v4.0.Utilities.dll')"
+      Text="La dépendance Microsoft.Office.Tools.Common.v4.0.Utilities.dll n'a pas été copiée dans $(TargetDir). La tâche VSTO FindRibbons ne peut pas charger l'add-in." />
+  </Target>
+  <Target Name="EnsureOcrAssets" BeforeTargets="AssignTargetPaths">
+    <Exec
+      Command="&quot;$(ProjectDir)..\..\scripts\prepare-assets.cmd&quot;"
+      Condition="!Exists('$(ProjectDir)tessdata\fra.traineddata') or !Exists('$(ProjectDir)tessdata\eng.traineddata')" />
+    <Error
+      Condition="!Exists('$(ProjectDir)tessdata\fra.traineddata') or !Exists('$(ProjectDir)tessdata\eng.traineddata')"
+      Text="Les modèles OCR français et anglais n'ont pas pu être préparés." />
+    <ItemGroup>
+      <Content Include="$(ProjectDir)tessdata\fra.traineddata">
+        <Link>tessdata\fra.traineddata</Link>
+        <TargetPath>tessdata\fra.traineddata</TargetPath>
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <PublishState>Include</PublishState>
+      </Content>
+      <Content Include="$(ProjectDir)tessdata\eng.traineddata">
+        <Link>tessdata\eng.traineddata</Link>
+        <TargetPath>tessdata\eng.traineddata</TargetPath>
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <PublishState>Include</PublishState>
+      </Content>
+    </ItemGroup>
+  </Target>
+  <Target Name="IncludeTesseractNativeAssetsInManifest" BeforeTargets="AssignTargetPaths">
+    <ItemGroup>
+      <Content
+        Include="@(None)"
+        Condition="'%(None.Extension)' == '.dll' and ('%(None.Filename)' == 'tesseract50' or '%(None.Filename)' == 'leptonica-1.82.0')">
+        <Link>%(None.Link)</Link>
+        <TargetPath>%(None.Link)</TargetPath>
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <PublishState>Include</PublishState>
+      </Content>
+    </ItemGroup>
+  </Target>
+  <Target Name="IncludePdfiumNativeAssetsInManifest" BeforeTargets="AssignTargetPaths">
+    <ItemGroup>
+      <_PdfiumNativeContent
+        Include="@(Content)"
+        Condition="'%(Content.Filename)' == 'pdfium' and '%(Content.Extension)' == '.dll'" />
+      <_PdfiumNativeNone
+        Include="@(None)"
+        Condition="'%(None.Filename)' == 'pdfium' and '%(None.Extension)' == '.dll'" />
+      <Content Remove="@(_PdfiumNativeContent)" />
+      <None Remove="@(_PdfiumNativeNone)" />
+      <Content Include="@(_PdfiumNativeContent);@(_PdfiumNativeNone)">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <PublishState>Include</PublishState>
+      </Content>
+    </ItemGroup>
+    <Error
+      Condition="'@(_PdfiumNativeContent)' == '' and '@(_PdfiumNativeNone)' == ''"
+      Text="Les bibliothèques natives PDFium n'ont pas été fournies par les packages NuGet." />
+  </Target>
+  <Target Name="VerifyPdfiumNativeOutput" AfterTargets="Build">
+    <Error
+      Condition="!Exists('$(TargetDir)x86\pdfium.dll')"
+      Text="La bibliothèque PDFium x86 est absente de $(TargetDir)x86." />
+    <Error
+      Condition="!Exists('$(TargetDir)x64\pdfium.dll')"
+      Text="La bibliothèque PDFium x64 est absente de $(TargetDir)x64." />
+  </Target>
+  <Target Name="EnsureManifestSigningCertificate"
+          BeforeTargets="VisualStudioForApplicationsBuild"
+          Condition="'$(ManifestCertificateThumbprint)' == '' and '$(DesignTimeBuild)' != 'true'">
+    <Exec
+      Command="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command &quot;$certificate = Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Subject -eq 'CN=Doctracker Development' -and $_.HasPrivateKey -and $_.NotAfter -gt (Get-Date).AddDays(1) } | Sort-Object NotAfter -Descending | Select-Object -First 1; if ($null -eq $certificate) { $certificate = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Doctracker Development' -CertStoreLocation 'Cert:\CurrentUser\My' -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -KeyExportPolicy NonExportable -NotAfter (Get-Date).AddDays(30) }; Write-Output $certificate.Thumbprint&quot;"
+      ConsoleToMSBuild="true"
+      StandardOutputImportance="Low">
+      <Output TaskParameter="ConsoleOutput" ItemName="_GeneratedCertificateThumbprint" />
+    </Exec>
+    <PropertyGroup>
+      <ManifestCertificateThumbprint>@(_GeneratedCertificateThumbprint)</ManifestCertificateThumbprint>
+      <CertificateThumbprint>@(_GeneratedCertificateThumbprint)</CertificateThumbprint>
+    </PropertyGroup>
+    <Error Condition="'$(CertificateThumbprint)' == ''"
+           Text="Impossible de créer ou de retrouver le certificat temporaire de signature Doctracker." />
+  </Target>
+  <ProjectExtensions>
+    <VisualStudio>
+      <FlavorProperties GUID="{BAA0C2D2-18E2-41B9-852F-F413020CAA33}">
+        <ProjectProperties HostName="Excel" HostPackage="{20A848B8-E01F-4801-962E-25DB0FF57389}"
+                           OfficeVersion="16.0" VstxVersion="4.0" ApplicationType="Excel"
+                           Language="cs" TemplatesPath="" DebugInfoExeName="#Software\Microsoft\Office\16.0\Excel\InstallRoot\Path#excel.exe"
+                           DebugInfoCommandLine="/x" AddItemTemplatesGuid="{51063C3A-E220-4D12-8922-BDA915ACD783}" />
+        <Host Name="Excel" GeneratedCodeNamespace="Doctracker.AddIn"
+              PublishedHash="69C6D9A2B90F2D9C1C0A1AFC4B1134C99B590C9B" IconIndex="0">
+          <HostItem Name="ThisAddIn" Code="ThisAddIn.cs" CanonicalName="AddIn"
+                    CanActivate="false" IconIndex="1" Blueprint="ThisAddIn.Designer.xml"
+                    GeneratedCode="ThisAddIn.Designer.cs" />
+        </Host>
+      </FlavorProperties>
+    </VisualStudio>
+  </ProjectExtensions>
+</Project>

@@ -1,0 +1,21 @@
+DOCTRACKER - INSTALLATION DE TEST
+=================================
+
+1. Fermez Excel.
+2. Decompressez entierement l'artefact Doctracker-Windows-Installer.
+3. Double-cliquez sur Install-Doctracker.cmd.
+4. Verifiez l'editeur et l'empreinte affiches, puis saisissez O.
+5. L'installateur setup.exe se lance automatiquement.
+6. Rouvrez Excel et cherchez l'onglet Doctracker.
+
+Ne lancez plus setup.exe directement : le certificat temporaire produit par
+GitHub Actions doit d'abord etre approuve par votre compte Windows.
+
+Le script controle avant toute modification que :
+- le certificat est valide et reserve a la signature de code ;
+- il ne contient aucune cle privee ;
+- son empreinte correspond exactement a la signature de setup.exe.
+
+Le certificat est ajoute pour l'utilisateur Windows courant uniquement. Cette
+procedure est destinee aux essais internes. Une version diffusee publiquement
+devra etre signee avec un certificat de signature de code durable.
