@@ -73,7 +73,8 @@ try {
     $importer = New-Object Doctracker.Core.Services.DocumentImporter $store
     $document = $importer.Import($state, $pdfPath, 'smoke')
     $indexerType = $assembly.GetType('Doctracker.AddIn.Infrastructure.DocumentIndexer', $true)
-    $indexer = [Activator]::CreateInstance($indexerType, @($store, $ocr))
+    $constructor = $indexerType.GetConstructors($flags)[0]
+    $indexer = $constructor.Invoke([object[]]@($store.PSObject.BaseObject, $ocr.PSObject.BaseObject))
     $indexer.Index($state, $document, $null, [Threading.CancellationToken]::None)
     if (!$document.IndexComplete -or $document.IndexedPages[0].Text -notmatch 'FA-001') { throw 'Native PDF index failed.' }
     $matcher = New-Object Doctracker.Core.Services.DocumentMatcher

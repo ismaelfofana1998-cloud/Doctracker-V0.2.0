@@ -48,6 +48,7 @@ namespace Doctracker.Core.Tests
         [InlineData("100,00", "-100,00")]
         [InlineData("FA-2025-0198", "FA-2025-0199")]
         [InlineData("123", "REF-123-001")]
+        [InlineData("00123", "123")]
         public void Similar_reference_or_amount_is_not_an_exact_match(string query, string source)
         {
             var state = Project(source);
@@ -156,6 +157,41 @@ namespace Doctracker.Core.Tests
                 Assert.ThrowsAny<Exception>(() => service.Commit(state, new[] { snip }));
                 Assert.Empty(state.Snips);
                 Assert.Empty(state.AuditTrail);
+            });
+        }
+
+        [Fact]
+        public void Import_failure_does_not_leave_an_unrecorded_document()
+        {
+            InDirectory(directory =>
+            {
+                var store = new ProjectStore(Path.Combine(directory, "project"));
+                Directory.CreateDirectory(store.MetadataPath + ".tmp");
+                var source = Path.Combine(directory, "source.pdf");
+                File.WriteAllText(source, "fixture");
+                var state = new ProjectState();
+                Assert.ThrowsAny<Exception>(() => new DocumentImporter(store).Import(state, source, "tester"));
+                Assert.Empty(state.Documents); Assert.Empty(state.AuditTrail);
+                Assert.Empty(Directory.GetFiles(store.DocumentsDirectory));
+            });
+        }
+
+        [Fact]
+        public void Reimport_repairs_a_missing_copy_without_duplicating_the_document()
+        {
+            InDirectory(directory =>
+            {
+                var store = new ProjectStore(Path.Combine(directory, "project"));
+                var source = Path.Combine(directory, "source.pdf");
+                File.WriteAllText(source, "fixture");
+                var state = new ProjectState();
+                var importer = new DocumentImporter(store);
+                var document = importer.Import(state, source, "tester");
+                File.Delete(store.ResolveDocumentPath(document));
+                var repeated = importer.Import(state, source, "tester");
+                Assert.Equal(document.Id, repeated.Id);
+                Assert.Single(state.Documents);
+                Assert.True(File.Exists(store.ResolveDocumentPath(document)));
             });
         }
 
