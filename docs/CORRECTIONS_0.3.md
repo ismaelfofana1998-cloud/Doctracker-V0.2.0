@@ -56,6 +56,11 @@ cryptographique d'inaltérabilité.
 
 ## Validation
 
+Au 23 septembre 2026 : **44 tests moteur réussis** sous .NET 8 et sous .NET
+Framework 4.8 ; compilation VSTO sans erreur ; smoke tests x86 et x64 réussis
+pour affichage/crop, OCR natif français/anglais, PDF paysage et positions des
+mots ; packaging ClickOnce et vérification du contenu réussis.
+
 Les tests automatiques vérifient des documents fictifs, les formats de nombres,
 les faux positifs, la persistance et le rendu/OCR. Ils ne simulent pas une session
 Excel complète. La recette `VALIDATION_EXCEL.md` couvre les opérations COM,

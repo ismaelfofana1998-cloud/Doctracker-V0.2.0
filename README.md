@@ -9,7 +9,9 @@ preuves à une cellule et revenir à la source pour la revue.
 1. Dans **GitHub Actions → Build Doctracker**, ouvrir l'exécution réussie correspondant
    à la branche `fix/excel-audit-workflows` (ou à sa fusion ultérieure).
 2. Télécharger l'artefact **Doctracker-Windows-Installer** et le décompresser entièrement.
-3. Fermer Excel. Lancer `Install-Doctracker.cmd` et vérifier le certificat affiché.
+3. Fermer Excel. Si une ancienne compilation de test est installée, désinstaller
+   uniquement le complément dans les applications Windows (conserver les missions).
+   Lancer `Install-Doctracker.cmd` et vérifier le certificat affiché.
 4. Ouvrir Excel de bureau Windows, puis enregistrer un classeur local.
 5. Onglet **Doctracker → Ajouter des pièces**. Le premier document s'affiche ;
    l'indexation utilise le texte natif des PDF ou l'OCR français/anglais pour les scans.

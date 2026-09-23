@@ -19,6 +19,7 @@ namespace Doctracker.AddIn.UI
 
         private WindowPane Current()
         {
+            CleanupClosedWindows();
             var workbook = application.ActiveWorkbook;
             var window = application.ActiveWindow;
             if (workbook == null || window == null) throw new InvalidOperationException("Ouvrez un classeur Excel.");
@@ -73,9 +74,31 @@ namespace Doctracker.AddIn.UI
         public bool IsBusy(ExcelInterop.Workbook workbook) => contexts.TryGetValue(workbook, out var context) && context.IsBusy;
         public void RefreshVisible()
         {
+            CleanupClosedWindows();
             var window = application.ActiveWindow;
             if (window != null && panes.TryGetValue(window.Hwnd, out var entry) && entry.Pane.Visible) entry.Control.RefreshProject();
         }
+        private void CleanupClosedWindows()
+        {
+            var openWindows = new HashSet<int>();
+            var openBooks = new HashSet<ExcelInterop.Workbook>();
+            foreach (ExcelInterop.Workbook book in application.Workbooks)
+            {
+                openBooks.Add(book);
+                foreach (ExcelInterop.Window window in book.Windows) openWindows.Add(window.Hwnd);
+            }
+            foreach (var pair in panes.Where(pair => !openWindows.Contains(pair.Key) || !openBooks.Contains(pair.Value.Workbook)).ToList())
+            {
+                // VSTO may already have removed the task pane after its window closed.
+                try { addIn.CustomTaskPanes.Remove(pair.Value.Pane); }
+                catch (System.Runtime.InteropServices.COMException) { }
+                catch (ArgumentException) { }
+                pair.Value.Control.Dispose();
+                panes.Remove(pair.Key);
+            }
+            foreach (var book in contexts.Keys.Where(book => !openBooks.Contains(book)).ToList()) contexts.Remove(book);
+        }
+
         public void Dispose()
         {
             foreach (var entry in panes.Values) entry.Control.Dispose();

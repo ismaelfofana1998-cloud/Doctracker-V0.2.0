@@ -1,7 +1,10 @@
 DOCTRACKER - INSTALLATION DE TEST
 =================================
 
-1. Fermez Excel.
+1. Fermez toutes les fenetres Excel.
+   Si une ancienne compilation de test de Doctracker est deja installee,
+   desinstallez uniquement ce complement dans Applications installees avant
+   de poursuivre. Conservez vos classeurs et leurs dossiers .doctracker.
 2. Decompressez entierement l'artefact Doctracker-Windows-Installer.
 3. Double-cliquez sur Install-Doctracker.cmd.
 4. Verifiez l'editeur et l'empreinte affiches, puis saisissez O.
