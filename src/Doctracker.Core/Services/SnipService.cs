@@ -81,7 +81,8 @@ namespace Doctracker.Core.Services
             string snipId,
             ReviewStatus status,
             string comment,
-            string actor)
+            string actor,
+            Action<SnipRecord> applyMetadata = null)
         {
             if (state == null) throw new ArgumentNullException(nameof(state));
             if (string.IsNullOrWhiteSpace(snipId))
@@ -106,7 +107,7 @@ namespace Doctracker.Core.Services
                 EntityId = snip.Id,
                 Details = status + ": " + snip.Comment
             });
-            try { store.Save(state); }
+            try { applyMetadata?.Invoke(snip); store.Save(state); }
             catch
             {
                 state.AuditTrail.RemoveAt(state.AuditTrail.Count - 1);

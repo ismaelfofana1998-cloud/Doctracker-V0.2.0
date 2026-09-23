@@ -1,138 +1,128 @@
-# Doctracker V0.2.0
+# Doctracker 0.3.0 — complément Excel Windows
 
-Doctracker est un add-in Excel Windows, local-first, conçu pour formaliser les
-preuves d'audit directement dans un classeur. Il importe des PDF et images,
-permet de sélectionner une zone, reconnaît son contenu et relie la donnée
-extraite à la cellule Excel cible.
+Doctracker importe des PDF et images dans un dossier de mission local. Il permet
+de sélectionner des zones, extraire leur contenu dans Excel, associer plusieurs
+preuves à une cellule et revenir à la source pour la revue.
 
-## Ce que contient cette première version
+## Installer et utiliser
 
-- onglet **Doctracker** dans le ruban Excel ;
-- volet latéral PDF/image avec liste déroulante des pièces ;
-- surface PDF zoomable et réellement déplaçable avec barres de défilement ;
-- sélection graphique d'une zone de preuve ;
-- OCR français et anglais exécuté localement ;
-- OCR automatique dès l'import pour rendre la recherche disponible immédiatement ;
-- recherche du contenu dans toutes les pièces indexées depuis une cellule Excel ou le volet ;
-- **Text Snip**, **Number Snip**, **Date Snip**, **Sum Snip** et **Table Snip** ;
-- mode de snip persistant : choisir un type dans le ruban puis dessiner plusieurs zones à la suite ;
-- insertion du résultat dans la cellule active ;
-- double-clic sur une cellule liée pour revenir à la pièce et à la zone ;
-- commentaires et statuts `Prepared`, `Reviewed`, `Rejected` ;
-- piste d'audit horodatée ;
-- import local avec détection des doublons par empreinte SHA-256 ;
-- Document Matching par colonne de recherche et colonne de résultat, ligne par ligne ;
-- tests automatisés du parsing, du matching et de la persistance ;
-- compilation Windows et génération d'un installateur ClickOnce.
+1. Dans **GitHub Actions → Build Doctracker**, ouvrir l'exécution réussie correspondant
+   à la branche `fix/excel-audit-workflows` (ou à sa fusion ultérieure).
+2. Télécharger l'artefact **Doctracker-Windows-Installer** et le décompresser entièrement.
+3. Fermer Excel. Lancer `Install-Doctracker.cmd` et vérifier le certificat affiché.
+4. Ouvrir Excel de bureau Windows, puis enregistrer un classeur local.
+5. Onglet **Doctracker → Ajouter des pièces**. Le premier document s'affiche ;
+   l'indexation utilise le texte natif des PDF ou l'OCR français/anglais pour les scans.
+6. Sélectionner une cellule, choisir **Texte**, **Nombre**, **Date**, **Somme**,
+   **Tableau**, **Validation** ou **Exception**, puis dessiner une zone.
+7. Double-cliquer sur une cellule liée pour revenir à sa preuve. S'il y en a plusieurs,
+   choisir la preuve dans la liste. Utiliser **Revoir** pour le statut et le commentaire.
 
-## Fonctionnement local
+Prérequis : Windows, Excel de bureau, .NET Framework 4.8, runtime VSTO,
+redistribuables Microsoft Visual C++ 2015–2022 correspondant à l'architecture d'Excel.
+L'installateur contient les moteurs PDF/OCR et leurs modèles français et anglais.
+La signature actuelle repose sur un certificat de développement temporaire,
+que le script d'installation fait vérifier avant de l'approuver pour l'utilisateur.
+Un déploiement permanent en cabinet nécessite une signature de production.
 
-Pour un classeur `Mission_Audit.xlsx`, Doctracker crée à côté du classeur :
+## Snips
+
+| Mode | Résultat |
+| --- | --- |
+| Texte | Texte exact du PDF natif, ou résultat OCR ; jamais exécuté comme une formule |
+| Nombre | Un seul montant, négatifs et séparateurs français/anglais pris en charge |
+| Date | Date Excel, avec prise en compte des classeurs utilisant le calendrier 1904 |
+| Somme | Somme de la zone ; les sélections suivantes s'ajoutent dans la même cellule avec leurs propres preuves |
+| Tableau | Aperçu modifiable construit à partir des positions des mots, puis insertion et preuve par cellule |
+| Validation / Exception | Ajout d'une preuve colorée sans remplacer la valeur de la cellule |
+
+Texte, Nombre, Date et Tableau avancent vers la ligne suivante après insertion.
+Validation, Exception et Somme restent sur la même cellule. Une insertion qui
+remplacerait des données demande confirmation. Les commentaires personnels sont
+conservés. Si l'écriture ou la sauvegarde des preuves échoue, Doctracker tente de
+restaurer la destination et signale explicitement une restauration incomplète.
+
+## Recherche et rapprochement
+
+- **Rechercher** utilise la cellule sélectionnée ; le champ du volet permet aussi une saisie libre.
+- Les résultats partiels restent consultables dans la recherche interactive.
+- Pour un rapprochement, sélectionner **sans en-têtes** une plage de 1 à 10 colonnes,
+  puis **Définir recherche**. Chaque colonne non vide est un critère obligatoire.
+- Sélectionner une cellule de départ ou une plage de même dimension, puis
+  **Définir résultat → Lancer le matching**.
+- Tous les critères d'une ligne doivent être trouvés exactement sur une même page.
+  Plusieurs pages ou documents possibles restent ambigus : aucune preuve automatique.
+- Les sorties sont les valeurs trouvées dans les pièces, avec un lien individuel.
+  Les preuves restent au statut **Prepared**, à revoir.
+- Lors d'une relance, le remplacement des résultats existants et l'effacement des
+  anciens résultats non confirmés demandent une confirmation globale.
+- La réindexation est accessible dans le volet. Une pièce incorrecte sans preuve
+  peut être retirée de la liste. Un échec d'indexation bloque le matching et nomme la pièce.
+
+Les opérations longues peuvent être annulées. Il faut attendre leur fin ou les
+annuler avant de fermer/enregistrer le classeur. Le complément ne sauvegarde pas
+le fichier Excel à votre place : enregistrer le classeur après le travail.
+
+## Conservation des missions
+
+Pour `Mission_Audit.xlsx`, le dossier adjacent est :
 
 ```text
 .Mission_Audit.doctracker/
 ├── project.xml
+├── project.xml.bak
 └── documents/
 ```
 
-`project.xml` contient les coordonnées des snips, les cellules cibles, les
-statuts et le journal. Les pièces sont copiées dans `documents/`. Aucun document
-ou texte OCR n'est envoyé vers un serveur.
+Les documents, coordonnées, statuts et événements restent sur l'ordinateur.
+Aucun document n'est transmis à un service OCR ou à une base cloud.
+**Conserver le classeur et son dossier ensemble.** Les preuves ne sont pas
+embarquées dans le fichier `.xlsx`. Un « Enregistrer sous » effectué pendant que
+le complément suit ce classeur copie son dossier, sans supprimer l'original.
+Un dossier de destination existant n'est pas écrasé.
 
-Pour déplacer ou archiver une mission, il faut conserver ensemble le classeur
-et son dossier `.doctracker`.
+Les projets 0.2 sont lisibles et migrent vers le schéma 2 à l'ouverture.
+La sauvegarde précédente reste dans `project.xml.bak`. Après migration,
+utiliser 0.3 pour éviter de perdre les positions de mots ou les nouveaux types
+de preuves en rouvrant avec 0.2. Cliquer **Réindexer les pièces** pour bénéficier
+des positions dans les anciens projets.
 
-## Installer la version compilée
+## Portée réelle et validation
 
-1. Ouvrir l'exécution **Build Doctracker** dans GitHub Actions.
-2. Télécharger l'artefact `Doctracker-Windows-Installer`.
-3. Décompresser entièrement l'artefact.
-4. Fermer Excel puis lancer `Install-Doctracker.cmd`.
-5. Vérifier les informations du certificat affichées et répondre `O`.
-6. L'assistant approuve le certificat pour l'utilisateur Windows courant et
-   lance automatiquement `setup.exe`.
-7. Fermer puis rouvrir Excel.
+Cette version corrige les parcours documentaires principaux. **Elle n'est pas
+une reproduction intégrale de DataSnipper.** Restent notamment absents : pièces
+embarquées dans le classeur, Form Extraction par modèle, matching entre plusieurs
+groupes de documents et pages, tolérances paramétrables, comparaison de versions,
+reconnaissance avancée des tableaux et administration d'entreprise.
 
-Le certificat produit par la chaîne actuelle est un certificat de
-développement temporaire. `Install-Doctracker.cmd` vérifie qu'il correspond
-exactement à la signature de `setup.exe`, qu'il ne contient aucune clé privée,
-puis l'ajoute uniquement aux magasins de confiance de l'utilisateur courant.
-La diffusion commerciale demandera un certificat de signature de code durable.
+L'OCR et la reconstruction de tableaux demandent une revue humaine. Une valeur
+modifiée manuellement dans Excel ne modifie pas automatiquement la preuve source.
+Le lien conservé doit être revu avant de conclure le contrôle.
 
-La chaîne crée le certificat **avant** la compilation VSTO et le transmet à
-toutes les étapes MSBuild. Elle vérifie ensuite que `setup.exe`, les manifestes,
-les deux langues OCR et les bibliothèques PDF sont réellement présents dans
-l'installateur avant de publier l'artefact.
+- Moteur : tests automatisés sous .NET 8 et .NET Framework 4.8.
+- Windows : compilation VSTO et tests de rendu, OCR, positions PDF en x86/x64.
+- Installation : contrôle des manifestes, signature et bibliothèques livrées.
+- **Excel installé** : la recette COM/interaction utilisateur doit être effectuée
+  sur un poste Windows avec Excel ; le runner de compilation n'héberge pas Excel.
 
-## Développer sous Windows
+Voir [les corrections et limites](docs/CORRECTIONS_0.3.md) et
+[la recette Excel](docs/VALIDATION_EXCEL.md).
 
-Prérequis :
+## Développement
 
-- Windows 10 ou 11 ;
-- Excel de bureau ;
-- Visual Studio 2022 avec la charge **Développement Office/SharePoint** ;
-- .NET Framework 4.8 et .NET 8 SDK ;
-- redistribuables Microsoft Visual C++ 2015-2022 **x86 et x64** pour le moteur
-  OCR natif.
+Visual Studio 2022 avec charge **Développement Office/SharePoint**, SDK .NET 8,
+.NET Framework 4.8. Ouvrir `Doctracker.sln`. Le moteur cible `net48` pour VSTO
+et `net8.0` pour les tests portables. Lancer :
 
-Procédure :
-
-1. ouvrir `Doctracker.sln` ;
-2. accepter l'installation des composants proposés par `.vsconfig` ;
-3. choisir `Doctracker.AddIn` comme projet de démarrage ;
-4. appuyer sur `F5` : le projet télécharge les deux modèles OCR s'ils manquent,
-   prépare un certificat de développement local si nécessaire, puis Visual
-   Studio lance Excel avec Doctracker.
-
-Pour reproduire localement toute la chaîne de release, y compris les tests et
-la génération de l'installateur, lancer `scripts\build-release.cmd`.
-
-La charge Office/SharePoint est la charge Microsoft prévue pour créer des
-add-ins VSTO. Voir la
-[documentation Visual Studio](https://learn.microsoft.com/visualstudio/install/workload-component-id-vs-community).
-
-## Parcours de test rapide
-
-1. Créer et enregistrer un classeur Excel.
-2. Ouvrir l'onglet **Doctracker**, puis **Ajouter des pièces**.
-3. Sélectionner une pièce dans le volet.
-4. Dessiner une zone sur un montant ou une date.
-5. Sélectionner une cellule Excel.
-6. Cliquer sur le type de snip correspondant.
-7. Choisir un mode de snip dans le ruban, puis dessiner plusieurs zones : chaque zone est traitée automatiquement.
-8. Cliquer sur **Rechercher** depuis une cellule contenant une référence ou un montant pour rechercher dans toutes les pièces.
-9. Pour le matching, sélectionner la plage d'entrée, cliquer sur **Définir recherche**, sélectionner la plage de sortie, cliquer sur **Définir résultat**, puis cliquer sur **Lancer le matching**.
-10. Double-cliquer sur une cellule liée pour revenir à la preuve.
-11. Cliquer sur **Revoir** pour renseigner le statut et le commentaire.
-
-Le scénario complet est détaillé dans
-[`docs/VALIDATION_EXCEL.md`](docs/VALIDATION_EXCEL.md).
-
-## Limites explicites de la V0.2.0
-
-- la validation finale de l'interface VSTO doit être effectuée dans Excel
-  Windows ;
-- le Table Snip reconstruit les colonnes à partir des espacements OCR : les
-  tableaux complexes ou sans alignement net demanderont une phase
-  d'amélioration ;
-- le Document Matching crée actuellement une référence vers la page candidate,
-  puis exige une validation humaine ; la localisation automatique au mot près
-  sera ajoutée avec l'index des boîtes OCR ;
-- la licence commerciale, l'administration des abonnements et la signature de
-  code de production ne font pas partie de cette version ;
-- les fichiers Office protégés ou les PDF chiffrés ne sont pas pris en charge.
-
-## Structure
-
-```text
-src/Doctracker.Core/       moteur, stockage, parsing, matching
-src/Doctracker.AddIn/      VSTO, ruban, volet, Excel, PDF, OCR
-tests/                     tests du moteur indépendant d'Excel
-scripts/                   préparation des données OCR et build local
-.github/workflows/         compilation et publication Windows
-docs/                      architecture et validation
+```powershell
+dotnet test tests/Doctracker.Core.Tests -f net48
+scripts\build-release.cmd
 ```
 
-Doctracker est un produit indépendant. Le projet reproduit des usages métier
-généraux de traçabilité documentaire sans utiliser le code, la marque ou
-l'identité graphique d'un logiciel tiers.
+Sous Linux, seuls les tests moteur sont exécutables :
+
+```sh
+dotnet test tests/Doctracker.Core.Tests -f net8.0
+```
+
+Doctracker est un produit indépendant utilisant ses propres code et interface.

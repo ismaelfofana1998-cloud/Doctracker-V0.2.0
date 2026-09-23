@@ -1,3 +1,11 @@
+# 0.3.0 — fiabilisation des parcours Excel
+
+Rendu/zoom et coordonnées corrigés, OCR ClickOnce x86/x64, PDF natif positionnel,
+TIFF multipage, annulation, isolation des classeurs, Enregistrer sous, écritures
+avec confirmation/restauration, validation/exception, preuves multiples, somme
+multi-zone, aperçu des tableaux, matching exact multicritère et tests de régression.
+Voir `docs/CORRECTIONS_0.3.md` pour les défauts, les tests et les limites réelles.
+
 # Journal des versions
 
 ## 0.2.0 — 31 juillet 2026

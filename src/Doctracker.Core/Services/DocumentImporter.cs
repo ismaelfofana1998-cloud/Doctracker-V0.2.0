@@ -35,6 +35,13 @@ namespace Doctracker.Core.Services
             var duplicate = state.Documents.FirstOrDefault(d => d.Sha256 == hash);
             if (duplicate != null)
             {
+                // Re-import can repair an accidentally removed local copy.
+                var existingPath = store.ResolveDocumentPath(duplicate);
+                if (!File.Exists(existingPath))
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(existingPath));
+                    File.Copy(sourcePath, existingPath, false);
+                }
                 return duplicate;
             }
 
@@ -62,7 +69,14 @@ namespace Doctracker.Core.Services
                 EntityId = document.Id,
                 Details = document.OriginalName
             });
-            store.Save(state);
+            try { store.Save(state); }
+            catch
+            {
+                state.Documents.Remove(document);
+                state.AuditTrail.RemoveAt(state.AuditTrail.Count - 1);
+                File.Delete(destination);
+                throw;
+            }
             return document;
         }
 

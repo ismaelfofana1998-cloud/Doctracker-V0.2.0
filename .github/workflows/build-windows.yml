@@ -87,6 +87,16 @@ jobs:
             /p:CertificateThumbprint=$thumbprint
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Smoke test rendering, native PDF and OCR (x64)
+        shell: powershell
+        run: ./tests/windows/Smoke.ps1
+
+      - name: Smoke test rendering, native PDF and OCR (x86)
+        shell: powershell
+        run: |
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File ./tests/windows/Smoke.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Publish ClickOnce installer
         shell: pwsh
         run: |

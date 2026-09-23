@@ -42,24 +42,26 @@ namespace Doctracker.Core.Services
 
         private MatchCandidate Score(DocumentRecord document, PageTextRecord page, string query)
         {
+            var normalizedQuery = Normalize(query);
             var candidate = new MatchCandidate { DocumentId = document.Id, PageNumber = page.PageNumber };
             decimal amount;
-            var isAmount = parser.TryParseAmount(query, out amount);
+            var isAmount = parser.TryParseAmount(query, out amount) && !Regex.IsMatch(query.Trim(), @"^0\d");
             DateTime date;
             var isDate = TryDate(query, out date);
             Func<string, bool> exact = text =>
             {
                 if (isDate) { DateTime other; return TryDate(text, out other) && other == date; }
                 if (isAmount) { decimal other; return parser.TryParseAmount(text, out other) && other == amount; }
-                return Normalize(text) == Normalize(query);
+                return Normalize(text) == normalizedQuery;
             };
 
             // Prefer a real word location. Never join words from different lines for amounts.
             var words = page.Words ?? new List<WordRecord>();
+            var maxWords = isAmount ? 6 : normalizedQuery.Split(' ').Length + 2;
             for (var start = 0; start < words.Count; start++)
             {
                 var selected = new List<WordRecord>();
-                for (var end = start; end < words.Count && end < start + 32; end++)
+                for (var end = start; end < words.Count && end < start + maxWords; end++)
                 {
                     if ((isAmount || isDate) && words[end].Line != words[start].Line) break;
                     selected.Add(words[end]);
@@ -92,7 +94,6 @@ namespace Doctracker.Core.Services
             }
             else
             {
-                var normalizedQuery = Normalize(query);
                 if ((" " + Normalize(textValue) + " ").Contains(" " + normalizedQuery + " "))
                     return Exact(candidate, FindSourceText(textValue, normalizedQuery));
                 if ((" " + Normalize(System.IO.Path.GetFileNameWithoutExtension(document.OriginalName)) + " ")

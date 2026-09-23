@@ -103,6 +103,48 @@ namespace Doctracker.AddIn.UI
             };
             searchResults.SelectedIndexChanged += SearchResults_SelectedIndexChanged;
 
+            var reindexButton = new Button { Text = "Réindexer les pièces", Dock = DockStyle.Top, Height = 28, FlatStyle = FlatStyle.Flat };
+            reindexButton.Click += async (sender, args) =>
+            {
+                if (context.IsBusy) return;
+                try
+                {
+                    EnsureProject(); BeginOperation();
+                    foreach (var document in context.State.Documents) document.IndexComplete = false;
+                    var errors = await IndexMissingAsync();
+                    BindDocuments();
+                    SetStatus(errors.Count == 0 ? "Index mis à jour." : errors.Count + " pièce(s) à vérifier.");
+                    if (errors.Count > 0) MessageBox.Show(this, string.Join("\n", errors), "Indexation");
+                }
+                catch (OperationCanceledException) { SetStatus("Réindexation annulée."); }
+                catch (Exception exception) { ShowError(exception); }
+                finally { EndOperation(); }
+            };
+
+            var removeButton = new Button { Text = "Retirer la pièce sélectionnée", Dock = DockStyle.Top, Height = 28, FlatStyle = FlatStyle.Flat };
+            removeButton.Click += (sender, args) =>
+            {
+                if (context.IsBusy) return;
+                try
+                {
+                    EnsureProject();
+                    var document = SelectedDocument;
+                    if (document == null) return;
+                    if (context.State.Snips.Any(snip => snip.DocumentId == document.Id))
+                        throw new InvalidOperationException("Cette pièce est liée à des preuves et doit être conservée.");
+                    if (MessageBox.Show(this, "Retirer " + document.OriginalName + " de la liste ?", "Retirer une pièce", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
+                    var index = context.State.Documents.IndexOf(document);
+                    var entry = new AuditEventRecord { Actor = Environment.UserName, Action = "DocumentRemoved", EntityType = "Document", EntityId = document.Id, Details = document.OriginalName };
+                    context.State.Documents.Remove(document); context.State.AuditTrail.Add(entry);
+                    try { context.Store.Save(context.State); }
+                    catch { context.State.Documents.Insert(index, document); context.State.AuditTrail.Remove(entry); throw; }
+                    searchResults.DataSource = null;
+                    BindDocuments();
+                    SetStatus("Pièce retirée de la liste. Sa copie locale est conservée pour récupération.");
+                }
+                catch (Exception exception) { ShowError(exception); }
+            };
+
             var documentPanel = new Panel
             {
                 Dock = DockStyle.Fill,
@@ -111,6 +153,8 @@ namespace Doctracker.AddIn.UI
             };
             documentPanel.Controls.Add(searchResults);
             documentPanel.Controls.Add(ocrState);
+            documentPanel.Controls.Add(removeButton);
+            documentPanel.Controls.Add(reindexButton);
             documentPanel.Controls.Add(importButton);
             documentPanel.Controls.Add(documents);
 
@@ -277,11 +321,27 @@ namespace Doctracker.AddIn.UI
                 }
                 else writes.Add(PrepareWrite(target, document, pageNumber, rectangle, type, recognized.Text));
                 var preserveValue = type == SnipType.Validation || type == SnipType.Exception;
-                if (!ConfirmOverwrite(writes, preserveValue)) return;
-                CommitWrites(writes, preserveValue);
+                var appendSum = false;
+                if (type == SnipType.Sum)
+                {
+                    var previous = cells.GetSnipIds(target).Select(id => context.State.Snips.FirstOrDefault(snip => snip.Id == id)).ToList();
+                    if (previous.Count > 0 && previous.All(snip => snip != null && snip.Type == SnipType.Sum))
+                    {
+                        var total = previous.Sum(snip => decimal.Parse(snip.ExtractedValue, System.Globalization.CultureInfo.InvariantCulture));
+                        decimal cellValue;
+                        if (!decimal.TryParse(Convert.ToString(target.Value2, System.Globalization.CultureInfo.InvariantCulture),
+                            System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out cellValue) || cellValue != total)
+                            throw new InvalidOperationException("La somme a été modifiée dans Excel. Choisissez une cellule vide pour une nouvelle somme.");
+                        writes[0].NumericOverride = total + decimal.Parse(writes[0].Snip.ExtractedValue, System.Globalization.CultureInfo.InvariantCulture);
+                        appendSum = true;
+                    }
+                }
+                if (!ConfirmOverwrite(writes, preserveValue || appendSum)) return;
+                CommitWrites(writes, preserveValue || appendSum);
                 canvas.ClearSelection();
                 SetStatus(writes.Count + " preuve(s) créée(s). Sélectionnez la prochaine cellule ou dessinez la zone suivante.");
-                if (writes.Count > 0 && !preserveValue && target.Row < target.Worksheet.Rows.Count &&
+                if (writes.Count > 0 && !preserveValue && type != SnipType.Sum && writes.Max(w => w.Target.Row) < target.Worksheet.Rows.Count &&
+                    (application.Selection as ExcelInterop.Range)?.Cells.CountLarge == 1 &&
                     cells.GetSingleTarget().Address[true, true, ExcelInterop.XlReferenceStyle.xlA1, true] ==
                     target.Address[true, true, ExcelInterop.XlReferenceStyle.xlA1, true])
                     ((ExcelInterop.Range)target.Offset[type == SnipType.Table ? writes.Max(w => w.Target.Row) - target.Row + 1 : 1, 0]).Select();
@@ -506,12 +566,18 @@ namespace Doctracker.AddIn.UI
                 using (var dialog = new ReviewDialog(snip))
                 {
                     if (dialog.ShowDialog(this) != DialogResult.OK) return;
-                    context.Snips.SetReview(context.State, snip.Id, dialog.SelectedStatus,
-                        dialog.ReviewComment, Environment.UserName);
+                    EnsureActiveWorkbook();
+                    ExcelCellGateway.ValidateWritable(target);
+                    var snapshot = cells.Snapshot(target);
+                    var source = context.State.Documents.First(item => item.Id == snip.DocumentId);
+                    try
+                    {
+                        context.Snips.SetReview(context.State, snip.Id, dialog.SelectedStatus,
+                            dialog.ReviewComment, Environment.UserName, updated => cells.AttachProof(target, updated, source));
+                    }
+                    catch { snapshot.Restore(); throw; }
                 }
 
-                var document = context.State.Documents.First(item => item.Id == snip.DocumentId);
-                cells.AttachProof(target, snip, document);
                 SetStatus("Statut de revue mis à jour : " + snip.Status + ".");
             }
             catch (Exception exception)
@@ -815,7 +881,11 @@ namespace Doctracker.AddIn.UI
                     target.ClearContents();
                     cells.RemoveProof(target);
                 }
-                foreach (var write in writes) cells.WriteSnip(write.Target, write.Snip, write.Document, append);
+                foreach (var write in writes)
+                {
+                    cells.WriteSnip(write.Target, write.Snip, write.Document, append);
+                    if (write.NumericOverride.HasValue) write.Target.Value2 = (double)write.NumericOverride.Value;
+                }
                 context.Snips.Commit(context.State, writes.Select(write => write.Snip).ToList());
             }
             catch (Exception failure)
@@ -888,6 +958,7 @@ namespace Doctracker.AddIn.UI
 
         private sealed class PendingWrite
         {
+            public decimal? NumericOverride { get; set; }
             public ExcelInterop.Range Target { get; set; }
             public SnipRecord Snip { get; set; }
             public DocumentRecord Document { get; set; }
