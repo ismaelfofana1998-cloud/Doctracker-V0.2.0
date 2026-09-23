@@ -1,6 +1,9 @@
 using System;
+using System.Collections.Generic;
+using System.Drawing;
 using System.Globalization;
 using System.Linq;
+using System.Text.RegularExpressions;
 using Doctracker.Core.Models;
 using ExcelInterop = Microsoft.Office.Interop.Excel;
 
@@ -10,132 +13,127 @@ namespace Doctracker.AddIn.Excel
     {
         internal const string MarkerPrefix = "DOCTRACKER-SNIP:";
         private readonly ExcelInterop.Application application;
-
-        public ExcelCellGateway(ExcelInterop.Application application)
-        {
-            this.application = application ?? throw new ArgumentNullException(nameof(application));
-        }
+        public ExcelCellGateway(ExcelInterop.Application application) { this.application = application; }
 
         public ExcelInterop.Range GetSingleTarget()
         {
-            var range = application.Selection as ExcelInterop.Range;
-            if (range == null || range.Cells.CountLarge != 1)
-            {
-                throw new InvalidOperationException("Select exactly one target cell.");
-            }
+            var range = GetSelection();
+            if (range.Cells.CountLarge != 1) throw new InvalidOperationException("Sélectionnez une seule cellule de destination.");
             return range;
         }
-
         public ExcelInterop.Range GetSelection()
         {
             var range = application.Selection as ExcelInterop.Range;
-            if (range == null) throw new InvalidOperationException("Select one or more Excel cells.");
+            if (range == null || range.Areas.Count != 1) throw new InvalidOperationException("Sélectionnez une plage Excel continue.");
             return range;
         }
 
-        public void WriteSnip(ExcelInterop.Range target, SnipRecord snip, DocumentRecord document)
+        public static void ValidateWritable(ExcelInterop.Range range)
         {
-            if (snip.Type == SnipType.Table)
+            if (range == null || range.Areas.Count != 1) throw new InvalidOperationException("La destination doit être une plage continue.");
+            if ((bool)range.Worksheet.ProtectContents) throw new InvalidOperationException("La feuille est protégée. Déprotégez-la avant l'insertion.");
+            if (!Equals(range.MergeCells, false)) throw new InvalidOperationException("La destination contient des cellules fusionnées.");
+            if (!Equals(range.HasArray, false)) throw new InvalidOperationException("La destination contient une formule matricielle.");
+        }
+
+        public static bool HasContent(ExcelInterop.Range target) =>
+            target.Value2 != null || Equals(target.HasFormula, true) || target.Comment != null;
+
+        public void WriteSnip(ExcelInterop.Range target, SnipRecord snip, DocumentRecord document, bool appendProof = false)
+        {
+            if (snip.Type != SnipType.Validation && snip.Type != SnipType.Exception)
             {
-                WriteTable(target, snip.ExtractedValue);
-            }
-            else if (snip.Type == SnipType.Number || snip.Type == SnipType.Sum)
-            {
-                decimal number;
-                if (decimal.TryParse(snip.ExtractedValue, NumberStyles.Any,
-                    CultureInfo.InvariantCulture, out number))
+                if (snip.Type == SnipType.Number || snip.Type == SnipType.Sum)
                 {
-                    target.Value2 = Convert.ToDouble(number);
+                    target.Value2 = double.Parse(snip.ExtractedValue, CultureInfo.InvariantCulture);
                     target.NumberFormat = "#,##0.00";
                 }
-                else
+                else if (snip.Type == SnipType.Date)
                 {
-                    throw new FormatException("The extracted amount cannot be written to Excel.");
-                }
-            }
-            else if (snip.Type == SnipType.Date)
-            {
-                DateTime date;
-                if (DateTime.TryParseExact(snip.ExtractedValue, "yyyy-MM-dd",
-                    CultureInfo.InvariantCulture, DateTimeStyles.None, out date))
-                {
-                    target.Value2 = date;
+                    var date = DateTime.ParseExact(snip.ExtractedValue, "yyyy-MM-dd", CultureInfo.InvariantCulture);
+                    // Value2 expects a serial, not a COM Date. Account for 1904 workbooks.
+                    var workbook = (ExcelInterop.Workbook)target.Worksheet.Parent;
+                    target.Value2 = date.ToOADate() - (workbook.Date1904 ? 1462 : 0);
                     target.NumberFormat = "dd/mm/yyyy";
                 }
                 else
                 {
-                    throw new FormatException("The extracted date cannot be written to Excel.");
+                    // Prevent OCR content beginning with =,+,-,@ from becoming a formula.
+                    target.NumberFormat = "@";
+                    target.Value2 = snip.ExtractedValue;
                 }
             }
-            else
-            {
-                target.Value2 = snip.ExtractedValue;
-            }
-
-            AttachProof(target, snip, document);
+            AttachProof(target, snip, document, appendProof);
         }
 
-        public void AttachProof(ExcelInterop.Range target, SnipRecord snip, DocumentRecord document)
+        public void AttachProof(ExcelInterop.Range target, SnipRecord snip, DocumentRecord document, bool append = true)
         {
-            var commentText =
-                MarkerPrefix + snip.Id + Environment.NewLine +
-                "Document : " + document.OriginalName + Environment.NewLine +
-                "Page : " + snip.PageNumber + Environment.NewLine +
-                "Statut : " + snip.Status + Environment.NewLine +
-                "Double-cliquer pour ouvrir la preuve.";
-
-            if (target.Comment == null)
-            {
-                target.AddComment(commentText);
-            }
-            else
-            {
-                target.Comment.Text(commentText);
-            }
-
+            var old = target.Comment == null ? "" : target.Comment.Text() ?? "";
+            // The entire Doctracker section is tagged; preserve pre-existing user notes.
+            var userNote = old.Split(new[] { "\n[DOCTRACKER]\n" }, StringSplitOptions.None)[0];
+            if (userNote.StartsWith(MarkerPrefix, StringComparison.Ordinal)) userNote = ""; // legacy metadata
+            var ids = append ? GetSnipIds(target).Where(id => id != snip.Id).ToList() : new List<string>();
+            ids.Add(snip.Id);
+            var text = userNote + "\n[DOCTRACKER]\n" + string.Join("\n", ids.Select(id => MarkerPrefix + id)) +
+                "\nDocument : " + document.OriginalName + "\nPage : " + snip.PageNumber + "\nType : " + snip.Type +
+                "\nStatut : " + snip.Status + "\nCommentaire : " + snip.Comment + "\nDouble-cliquer pour ouvrir la preuve.";
+            if (target.Comment == null) target.AddComment(text); else target.Comment.Text(text);
             target.Comment.Visible = false;
-            target.Interior.Color = System.Drawing.ColorTranslator.ToOle(
-                System.Drawing.Color.FromArgb(255, 244, 225));
-            target.Font.Color = System.Drawing.ColorTranslator.ToOle(
-                System.Drawing.Color.FromArgb(18, 28, 45));
+            var color = snip.Status == ReviewStatus.Rejected || snip.Type == SnipType.Exception ? Color.MistyRose :
+                snip.Status == ReviewStatus.Reviewed || snip.Type == SnipType.Validation ? Color.Honeydew : Color.FromArgb(255, 244, 225);
+            target.Interior.Color = ColorTranslator.ToOle(color);
         }
 
-        public string GetSnipId(ExcelInterop.Range target)
+        public void RemoveProof(ExcelInterop.Range target)
         {
-            try
-            {
-                if (target == null || target.Comment == null) return null;
-                var text = target.Comment.Text() ?? string.Empty;
-                var marker = text.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None)
-                    .FirstOrDefault(line => line.StartsWith(MarkerPrefix, StringComparison.Ordinal));
-                return marker == null ? null : marker.Substring(MarkerPrefix.Length).Trim();
-            }
-            catch
-            {
-                return null;
-            }
+            if (GetSnipIds(target).Count == 0) return;
+            var text = target.Comment.Text() ?? "";
+            var note = text.Split(new[] { "\n[DOCTRACKER]\n" }, StringSplitOptions.None)[0];
+            if (note.StartsWith(MarkerPrefix, StringComparison.Ordinal)) note = "";
+            target.Comment.Delete();
+            if (!string.IsNullOrEmpty(note)) target.AddComment(note);
+            target.Interior.Pattern = ExcelInterop.XlPattern.xlPatternNone;
         }
 
-        private static void WriteTable(ExcelInterop.Range startCell, string tableText)
+        public IReadOnlyList<string> GetSnipIds(ExcelInterop.Range target)
         {
-            var rows = (tableText ?? string.Empty)
-                .Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries)
-                .Select(line => line.Split('\t'))
-                .ToArray();
-            if (rows.Length == 0) throw new InvalidOperationException("No table data was recognized.");
-            var columns = rows.Max(row => row.Length);
-            var values = new object[rows.Length, columns];
+            if (target == null || target.Cells.CountLarge != 1 || target.Comment == null) return new List<string>();
+            var text = target.Comment.Text() ?? "";
+            return Regex.Split(text, @"\r?\n").Where(line => line.StartsWith(MarkerPrefix, StringComparison.Ordinal))
+                .Select(line => line.Substring(MarkerPrefix.Length).Trim()).Where(id => id.Length > 0).Distinct().ToList();
+        }
+        public string GetSnipId(ExcelInterop.Range target) => GetSnipIds(target).LastOrDefault();
 
-            for (var row = 0; row < rows.Length; row++)
+        public static string QueryText(ExcelInterop.Range cell)
+        {
+            var value = cell.Value; // preserves VT_DATE when Excel formatted the value as a date
+            if (value is DateTime) return ((DateTime)value).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            return Convert.ToString(cell.Value2, CultureInfo.InvariantCulture);
+        }
+
+        public CellSnapshot Snapshot(ExcelInterop.Range target) => new CellSnapshot(target);
+        internal sealed class CellSnapshot
+        {
+            private readonly ExcelInterop.Range target;
+            private readonly object formula, value, format, color, pattern;
+            private readonly bool hasFormula;
+            private readonly string note;
+            public CellSnapshot(ExcelInterop.Range target)
             {
-                for (var column = 0; column < rows[row].Length; column++)
-                {
-                    values[row, column] = rows[row][column];
-                }
+                this.target = target;
+                hasFormula = Equals(target.HasFormula, true);
+                formula = target.Formula; value = target.Value2; format = target.NumberFormat;
+                color = target.Interior.Color; pattern = target.Interior.Pattern;
+                note = target.Comment == null ? null : target.Comment.Text();
             }
-
-            var destination = startCell.Resize[rows.Length, columns];
-            destination.Value2 = values;
+            public void Restore()
+            {
+                if (hasFormula) { target.NumberFormat = format; target.Formula = formula; }
+                else { target.NumberFormat = "@"; target.Value2 = value; target.NumberFormat = format; }
+                target.Interior.Color = color; target.Interior.Pattern = pattern;
+                if (target.Comment != null) target.Comment.Delete();
+                if (note != null) target.AddComment(note);
+            }
         }
     }
 }

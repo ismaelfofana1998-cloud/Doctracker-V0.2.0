@@ -10,128 +10,134 @@ namespace Doctracker.Core.Services
 {
     public sealed class DocumentMatcher
     {
+        private readonly TextValueParser parser = new TextValueParser();
+
         public IReadOnlyList<MatchCandidate> Find(ProjectState state, string query, int maximum = 5)
         {
             if (state == null) throw new ArgumentNullException(nameof(state));
-            if (string.IsNullOrWhiteSpace(query)) return new List<MatchCandidate>();
+            if (Normalize(query).Length == 0 || maximum <= 0) return new List<MatchCandidate>();
+            return state.Documents.SelectMany(document => document.IndexedPages.Select(page => Score(document, page, query)))
+                .Where(candidate => candidate.Score > 0).OrderByDescending(candidate => candidate.Score)
+                .ThenBy(candidate => candidate.DocumentId).ThenBy(candidate => candidate.PageNumber).Take(maximum).ToList();
+        }
 
-            var normalizedQuery = Normalize(query);
-            var queryTokens = Tokenize(normalizedQuery);
-            decimal queryAmount;
-            var hasAmount = TryExtractAmount(query, out queryAmount);
-            if (normalizedQuery.Length == 0 && !hasAmount)
-            {
+        // Automatic matching is deliberately stricter than interactive search:
+        // every populated field must occur on the same page, and ambiguous documents stay unresolved.
+        public IReadOnlyList<MatchCandidate> FindAllFields(ProjectState state, IReadOnlyList<string> queries)
+        {
+            if (state == null) throw new ArgumentNullException(nameof(state));
+            if (queries == null || queries.Count == 0 || queries.All(string.IsNullOrWhiteSpace))
                 return new List<MatchCandidate>();
+            var result = new List<MatchCandidate>();
+            foreach (var document in state.Documents)
+            foreach (var page in document.IndexedPages)
+            {
+                var fields = queries.Select(query => string.IsNullOrWhiteSpace(query) ? null : Score(document, page, query)).ToList();
+                if (fields.Where(field => field != null).Any(field => !field.IsExact)) continue;
+                result.Add(new MatchCandidate { DocumentId = document.Id, PageNumber = page.PageNumber,
+                    Score = 1, IsExact = true, Fields = fields });
             }
-
-            return state.Documents
-                .SelectMany(document => document.IndexedPages.Select(page =>
-                    Score(document.Id, page, normalizedQuery, queryTokens, hasAmount, queryAmount)))
-                .Where(candidate => candidate.Score > 0)
-                .OrderByDescending(candidate => candidate.Score)
-                .Take(Math.Max(1, maximum))
-                .ToList();
+            return result;
         }
 
-        private static MatchCandidate Score(
-            string documentId,
-            PageTextRecord page,
-            string normalizedQuery,
-            HashSet<string> queryTokens,
-            bool hasAmount,
-            decimal queryAmount)
+        private MatchCandidate Score(DocumentRecord document, PageTextRecord page, string query)
         {
-            var normalizedPage = Normalize(page.Text);
-            var score = 0d;
-
-            if (normalizedQuery.Length > 0 && normalizedPage.Contains(normalizedQuery))
+            var candidate = new MatchCandidate { DocumentId = document.Id, PageNumber = page.PageNumber };
+            decimal amount;
+            var isAmount = parser.TryParseAmount(query, out amount);
+            DateTime date;
+            var isDate = TryDate(query, out date);
+            Func<string, bool> exact = text =>
             {
-                score += 0.65;
-            }
-
-            var pageTokens = Tokenize(normalizedPage);
-            if (queryTokens.Count > 0)
-            {
-                var intersection = queryTokens.Count(token => pageTokens.Contains(token));
-                score += 0.55 * intersection / queryTokens.Count;
-            }
-
-            if (hasAmount)
-            {
-                var amounts = ExtractAmounts(page.Text);
-                if (amounts.Any(amount => Math.Abs(amount - queryAmount) <= 0.01m))
-                {
-                    score += 0.35;
-                }
-            }
-
-            return new MatchCandidate
-            {
-                DocumentId = documentId,
-                PageNumber = page.PageNumber,
-                Score = Math.Min(1d, score),
-                Evidence = CreateEvidence(page.Text, normalizedQuery)
+                if (isDate) { DateTime other; return TryDate(text, out other) && other == date; }
+                if (isAmount) { decimal other; return parser.TryParseAmount(text, out other) && other == amount; }
+                return Normalize(text) == Normalize(query);
             };
-        }
 
-        private static string Normalize(string value)
-        {
-            var decomposed = (value ?? string.Empty).ToLowerInvariant().Normalize(NormalizationForm.FormD);
-            var builder = new StringBuilder();
-            foreach (var character in decomposed)
+            // Prefer a real word location. Never join words from different lines for amounts.
+            var words = page.Words ?? new List<WordRecord>();
+            for (var start = 0; start < words.Count; start++)
             {
-                var category = CharUnicodeInfo.GetUnicodeCategory(character);
-                if (category != UnicodeCategory.NonSpacingMark)
+                var selected = new List<WordRecord>();
+                for (var end = start; end < words.Count && end < start + 32; end++)
                 {
-                    builder.Append(char.IsLetterOrDigit(character) ? character : ' ');
+                    if ((isAmount || isDate) && words[end].Line != words[start].Line) break;
+                    selected.Add(words[end]);
+                    var value = string.Join(" ", selected.Select(word => word.Text));
+                    if (!exact(value)) continue;
+                    candidate.IsExact = true;
+                    candidate.Score = 1;
+                    candidate.Evidence = value;
+                    candidate.HasLocation = true;
+                    candidate.X = selected.Min(word => word.X);
+                    candidate.Y = selected.Min(word => word.Y);
+                    candidate.Width = selected.Max(word => word.X + word.Width) - candidate.X;
+                    candidate.Height = selected.Max(word => word.Y + word.Height) - candidate.Y;
+                    return candidate;
                 }
             }
+
+            // Legacy projects/native PDF pages may have plain text without word boxes.
+            var textValue = page.Text ?? "";
+            if (isAmount)
+            {
+                foreach (Match match in Regex.Matches(textValue,
+                    @"(?<![\p{L}\d/.-])\(?[-+−]?(?:\d{1,3}(?:[ \u00A0\u202F]\d{3}(?!\d))+|\d+)(?:[.,]\d+)*-?\)?(?![\p{L}\d/.-])"))
+                    if (exact(match.Value)) return Exact(candidate, match.Value);
+            }
+            else if (isDate)
+            {
+                foreach (Match match in Regex.Matches(textValue, @"(?<!\d)\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}(?!\d)"))
+                    if (exact(match.Value)) return Exact(candidate, match.Value);
+            }
+            else
+            {
+                var normalizedQuery = Normalize(query);
+                if ((" " + Normalize(textValue) + " ").Contains(" " + normalizedQuery + " "))
+                    return Exact(candidate, FindSourceText(textValue, normalizedQuery));
+                if ((" " + Normalize(System.IO.Path.GetFileNameWithoutExtension(document.OriginalName)) + " ")
+                    .Contains(" " + normalizedQuery + " ")) return Exact(candidate, document.OriginalName);
+                var tokens = normalizedQuery.Split(' ').Distinct().ToArray();
+                var available = new HashSet<string>(Normalize(textValue).Split(' '));
+                candidate.Score = tokens.Count(token => available.Contains(token)) / (double)tokens.Length * 0.6;
+            }
+            candidate.Evidence = textValue.Length <= 180 ? textValue : textValue.Substring(0, 180);
+            return candidate;
+        }
+
+        private static MatchCandidate Exact(MatchCandidate candidate, string evidence)
+        {
+            candidate.Score = 1; candidate.IsExact = true; candidate.Evidence = evidence;
+            return candidate;
+        }
+
+        private static string FindSourceText(string text, string query)
+        {
+            var words = Regex.Split(text.Trim(), @"\s+");
+            for (var i = 0; i < words.Length; i++)
+            for (var count = 1; count <= 32 && i + count <= words.Length; count++)
+            {
+                var value = string.Join(" ", words.Skip(i).Take(count));
+                if (Normalize(value) == query) return value;
+            }
+            return text.Trim();
+        }
+
+        private static bool TryDate(string text, out DateTime date)
+        {
+            date = default(DateTime);
+            if (!Regex.IsMatch((text ?? "").Trim(), @"^\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}$")) return false;
+            try { date = TextValueParser.ParseDate(text); return true; }
+            catch (FormatException) { return false; }
+        }
+
+        private static string Normalize(string text)
+        {
+            var builder = new StringBuilder();
+            foreach (var c in (text ?? "").ToLowerInvariant().Normalize(NormalizationForm.FormD))
+                if (CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark)
+                    builder.Append(char.IsLetterOrDigit(c) ? c : ' ');
             return Regex.Replace(builder.ToString(), @"\s+", " ").Trim();
-        }
-
-        private static HashSet<string> Tokenize(string value)
-        {
-            return new HashSet<string>(
-                Regex.Split(value ?? string.Empty, @"\s+").Where(token => token.Length >= 2),
-                StringComparer.Ordinal);
-        }
-
-        private static bool TryExtractAmount(string value, out decimal amount)
-        {
-            amount = 0m;
-            var parser = new TextValueParser();
-            try
-            {
-                amount = parser.ParseNumber(value);
-                return true;
-            }
-            catch (FormatException)
-            {
-                return false;
-            }
-        }
-
-        private static IReadOnlyList<decimal> ExtractAmounts(string value)
-        {
-            var parser = new TextValueParser();
-            try
-            {
-                return parser.ParseAllNumbers(value);
-            }
-            catch (FormatException)
-            {
-                return new List<decimal>();
-            }
-        }
-
-        private static string CreateEvidence(string pageText, string normalizedQuery)
-        {
-            var singleLine = Regex.Replace(pageText ?? string.Empty, @"\s+", " ").Trim();
-            if (singleLine.Length <= 180) return singleLine;
-            var firstToken = normalizedQuery.Split(' ').FirstOrDefault() ?? string.Empty;
-            var index = Normalize(singleLine).IndexOf(firstToken, StringComparison.Ordinal);
-            var start = Math.Max(0, Math.Min(singleLine.Length - 180, index - 60));
-            return singleLine.Substring(start, 180);
         }
     }
 }

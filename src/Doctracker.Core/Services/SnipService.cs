@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Collections.Generic;
 using Doctracker.Core.Geometry;
 using Doctracker.Core.Models;
 
@@ -16,7 +17,7 @@ namespace Doctracker.Core.Services
             this.parser = parser ?? throw new ArgumentNullException(nameof(parser));
         }
 
-        public SnipRecord Create(
+        public SnipRecord Prepare(
             ProjectState state,
             string documentId,
             int pageNumber,
@@ -54,17 +55,25 @@ namespace Doctracker.Core.Services
                 Status = ReviewStatus.Prepared
             };
 
-            state.Snips.Add(snip);
-            state.AuditTrail.Add(new AuditEventRecord
-            {
-                Actor = actor ?? string.Empty,
-                Action = "SnipCreated",
-                EntityType = "Snip",
-                EntityId = snip.Id,
-                Details = worksheetName + "!" + cellAddress
-            });
-            store.Save(state);
             return snip;
+        }
+
+        public void Commit(ProjectState state, IReadOnlyList<SnipRecord> snips)
+        {
+            var events = snips.Select(snip => new AuditEventRecord
+            {
+                Actor = snip.PreparedBy, Action = "SnipCreated", EntityType = "Snip", EntityId = snip.Id,
+                Details = snip.WorksheetName + "!" + snip.CellAddress
+            }).ToList();
+            state.Snips.AddRange(snips);
+            state.AuditTrail.AddRange(events);
+            try { store.Save(state); }
+            catch
+            {
+                foreach (var snip in snips) state.Snips.Remove(snip);
+                foreach (var entry in events) state.AuditTrail.Remove(entry);
+                throw;
+            }
         }
 
         public void SetReview(
@@ -81,10 +90,14 @@ namespace Doctracker.Core.Services
             var snip = state.Snips.FirstOrDefault(item => item.Id == snipId);
             if (snip == null) throw new InvalidOperationException("Snip not found.");
 
+            var oldStatus = snip.Status;
+            var oldComment = snip.Comment;
+            var oldReviewer = snip.ReviewedBy;
+            var oldDate = snip.ReviewedAtUtc;
             snip.Status = status;
             snip.Comment = comment ?? string.Empty;
-            snip.ReviewedBy = actor ?? string.Empty;
-            snip.ReviewedAtUtc = DateTime.UtcNow;
+            snip.ReviewedBy = status == ReviewStatus.Prepared ? string.Empty : actor ?? string.Empty;
+            snip.ReviewedAtUtc = status == ReviewStatus.Prepared ? (DateTime?)null : DateTime.UtcNow;
             state.AuditTrail.Add(new AuditEventRecord
             {
                 Actor = actor ?? string.Empty,
@@ -93,7 +106,14 @@ namespace Doctracker.Core.Services
                 EntityId = snip.Id,
                 Details = status + ": " + snip.Comment
             });
-            store.Save(state);
+            try { store.Save(state); }
+            catch
+            {
+                state.AuditTrail.RemoveAt(state.AuditTrail.Count - 1);
+                snip.Status = oldStatus; snip.Comment = oldComment;
+                snip.ReviewedBy = oldReviewer; snip.ReviewedAtUtc = oldDate;
+                throw;
+            }
         }
     }
 }

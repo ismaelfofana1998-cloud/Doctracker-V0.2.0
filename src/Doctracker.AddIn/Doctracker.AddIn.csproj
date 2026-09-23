@@ -32,7 +32,7 @@
     <UpdateEnabled>false</UpdateEnabled>
     <TargetCulture>fr-FR</TargetCulture>
     <FallbackCulture>en-US</FallbackCulture>
-    <ApplicationVersion>0.2.0.0</ApplicationVersion>
+    <ApplicationVersion>0.3.0.0</ApplicationVersion>
     <ApplicationRevision>0</ApplicationRevision>
     <BootstrapperEnabled>true</BootstrapperEnabled>
   </PropertyGroup>
@@ -114,6 +114,7 @@
     <Compile Include="UI\DoctrackerPaneControl.cs" />
     <Compile Include="UI\PaneController.cs" />
     <Compile Include="UI\ReviewDialog.cs" />
+    <Compile Include="UI\TablePreviewDialog.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="ThisAddIn.Designer.xml">

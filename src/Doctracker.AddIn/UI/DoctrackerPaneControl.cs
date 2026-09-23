@@ -3,6 +3,9 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Threading;
+using System.IO;
+using Doctracker.Core.Services;
 using System.Windows.Forms;
 using Doctracker.AddIn.Excel;
 using Doctracker.AddIn.Infrastructure;
@@ -27,16 +30,20 @@ namespace Doctracker.AddIn.UI
         private readonly Label status;
 
         private SnipType? activeSnipType;
-        private bool snipInProgress;
+        private readonly ExcelInterop.Workbook workbook;
+        private CancellationTokenSource operation;
+        private string boundProjectPath;
+        private readonly Button cancelButton;
         private string matchingInputSheet;
         private string matchingInputAddress;
         private string matchingOutputSheet;
         private string matchingOutputAddress;
 
-        public DoctrackerPaneControl(ExcelInterop.Application application)
+        public DoctrackerPaneControl(ExcelInterop.Application application, ExcelInterop.Workbook workbook, WorkbookProjectContext projectContext)
         {
             this.application = application ?? throw new ArgumentNullException(nameof(application));
-            context = new WorkbookProjectContext();
+            this.workbook = workbook;
+            context = projectContext;
             cells = new ExcelCellGateway(application);
             ocr = new TesseractOcrEngine();
 
@@ -113,6 +120,7 @@ namespace Doctracker.AddIn.UI
             var split = new SplitContainer
             {
                 Dock = DockStyle.Fill,
+                Size = new Size(760, 600),
                 FixedPanel = FixedPanel.Panel1,
                 Panel1MinSize = 185,
                 BackColor = Color.FromArgb(231, 235, 240)
@@ -132,7 +140,10 @@ namespace Doctracker.AddIn.UI
                 AutoEllipsis = true
             };
 
+            cancelButton = new Button { Text = "Annuler l’opération", Dock = DockStyle.Bottom, Height = 28, Visible = false };
+            cancelButton.Click += (sender, args) => operation?.Cancel();
             Controls.Add(split);
+            Controls.Add(cancelButton);
             Controls.Add(status);
             Controls.Add(workflowBar);
             Controls.Add(searchBar);
@@ -141,15 +152,9 @@ namespace Doctracker.AddIn.UI
 
         public void RefreshProject()
         {
-            try
-            {
-                EnsureProject();
-                BindDocuments();
-            }
-            catch (Exception exception)
-            {
-                ShowError(exception);
-            }
+            if (context.IsBusy || IsDisposed) return;
+            try { EnsureProject(); BindDocuments(); }
+            catch (Exception exception) { SetStatus(exception.Message); }
         }
 
         public void SetSnipMode(SnipType? type)
@@ -178,99 +183,112 @@ namespace Doctracker.AddIn.UI
 
         private async void ImportDocumentsAsync()
         {
+            if (context.IsBusy) { SetStatus("Une opération est déjà en cours."); return; }
             try
             {
                 EnsureProject();
                 using (var dialog = new OpenFileDialog
                 {
                     Title = "Ajouter des pièces au dossier Doctracker",
-                    Filter = "Documents|*.pdf;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.bmp",
-                    Multiselect = true,
-                    CheckFileExists = true
+                    Filter = "Documents|*.pdf;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.bmp", Multiselect = true, CheckFileExists = true
                 })
                 {
                     if (dialog.ShowDialog() != DialogResult.OK) return;
-
-                    var imported = new List<DocumentRecord>();
+                    BeginOperation();
+                    var errors = new List<string>();
                     foreach (var path in dialog.FileNames)
                     {
-                        var document = context.Importer.Import(context.State, path, Environment.UserName);
-                        if (!imported.Any(item => item.Id == document.Id)) imported.Add(document);
+                        operation.Token.ThrowIfCancellationRequested();
+                        try { await Task.Run(() => context.Importer.Import(context.State, path, Environment.UserName)); }
+                        catch (Exception exception) { errors.Add(Path.GetFileName(path) + " : " + exception.Message); }
                     }
-
                     BindDocuments();
-                    var indexer = new DocumentIndexer(context.Store, ocr);
-                    foreach (var document in imported.Where(item => item.IndexedPages.Count == 0))
-                    {
-                        SetStatus("OCR automatique : " + document.OriginalName + "…");
-                        await Task.Run(() => indexer.Index(context.State,
-                            document,
-                            (page, count) => SetStatusThreadSafe(
-                                "OCR : " + document.OriginalName + " — page " + page + "/" + count)));
-                    }
+                    errors.AddRange(await IndexMissingAsync());
+                    BindDocuments();
+                    SetStatus(errors.Count == 0 ? "Pièces importées et prêtes pour la recherche." : "Import terminé avec " + errors.Count + " erreur(s).");
+                    if (errors.Count > 0) MessageBox.Show(this, string.Join("\n", errors), "Pièces à vérifier");
                 }
-
-                BindDocuments();
-                SetStatus("Pièces importées et index OCR prêtes pour la recherche.");
             }
-            catch (Exception exception)
-            {
-                ShowError(exception);
-            }
+            catch (OperationCanceledException) { SetStatus("Import interrompu. Les pièces déjà importées sont conservées."); }
+            catch (Exception exception) { ShowError(exception); }
+            finally { EndOperation(); }
         }
 
         private async void Canvas_SelectionCompleted(object sender, EventArgs e)
         {
-            if (!activeSnipType.HasValue || snipInProgress) return;
+            if (!activeSnipType.HasValue || context.IsBusy) return;
             await CaptureSnipAsync(activeSnipType.Value);
         }
 
         private async Task CaptureSnipAsync(SnipType type)
         {
-            if (snipInProgress) return;
-            snipInProgress = true;
+            if (context.IsBusy) return;
             try
             {
                 EnsureProject();
                 var document = SelectedDocument;
-                if (document == null) throw new InvalidOperationException("Sélectionnez d'abord une pièce.");
-                if (!canvas.HasSelection) throw new InvalidOperationException("Dessinez une zone sur le document.");
-
+                if (document == null || !canvas.HasSelection) throw new InvalidOperationException("Dessinez une zone sur une pièce.");
                 var target = cells.GetSingleTarget();
-                var worksheet = (ExcelInterop.Worksheet)target.Worksheet;
-                var address = target.Address[false, false, ExcelInterop.XlReferenceStyle.xlA1];
+                var pageNumber = canvas.CurrentPageNumber;
                 var rectangle = canvas.GetNormalizedSelection();
-                string recognized;
-
-                SetStatus("Reconnaissance OCR de la zone en cours…");
-                using (var crop = canvas.CropSelection())
+                BeginOperation();
+                PageTextRecord recognized;
+                if (type == SnipType.Validation || type == SnipType.Exception)
+                    recognized = new PageTextRecord { Text = ExcelCellGateway.QueryText(target) };
+                else
                 {
-                    recognized = await Task.Run(() => ocr.Recognize(crop));
+                    SetStatus("Extraction de la zone…");
+                    // Native/indexed words preserve exact text; scan-only pages use the local OCR.
+                    recognized = ExtractIndexedSelection(document, pageNumber, rectangle);
+                    if (recognized == null)
+                        using (var crop = canvas.CropSelection()) recognized = await Task.Run(() => ocr.Recognize(crop, type == SnipType.Table));
                 }
-
-                var snip = context.Snips.Create(
-                    context.State,
-                    document.Id,
-                    canvas.CurrentPageNumber,
-                    new NormalizedRectangle(rectangle.X, rectangle.Y, rectangle.Width, rectangle.Height),
-                    type,
-                    recognized,
-                    worksheet.Name,
-                    address,
-                    Environment.UserName);
-
-                cells.WriteSnip(target, snip, document);
+                operation.Token.ThrowIfCancellationRequested();
+                EnsureActiveWorkbook();
+                var writes = new List<PendingWrite>();
+                if (type == SnipType.Table)
+                {
+                    var extracted = LayoutExtractor.Extract(recognized.Words);
+                    if (extracted.Count == 0) throw new InvalidOperationException("Aucun tableau reconnu. Agrandissez la zone.");
+                    var rowCount = extracted.Max(cell => cell.Row) + 1;
+                    var columnCount = extracted.Max(cell => cell.Column) + 1;
+                    if (rowCount * columnCount > 10000) throw new InvalidOperationException("Limitez le tableau à 10 000 cellules.");
+                    if (target.Row + rowCount - 1 > target.Worksheet.Rows.Count || target.Column + columnCount - 1 > target.Worksheet.Columns.Count)
+                        throw new InvalidOperationException("Le tableau dépasse les limites de la feuille.");
+                    using (var preview = new TablePreviewDialog(extracted, rowCount, columnCount))
+                    {
+                        if (preview.ShowDialog(this) != DialogResult.OK) return;
+                        for (var row = 0; row < rowCount; row++)
+                        for (var column = 0; column < columnCount; column++)
+                        {
+                            var text = preview.ValueAt(row, column);
+                            if (string.IsNullOrWhiteSpace(text)) continue;
+                            var source = extracted.FirstOrDefault(cell => cell.Row == row && cell.Column == column);
+                            var zone = source == null ? rectangle : new RectangleF(
+                                rectangle.X + (float)source.X * rectangle.Width, rectangle.Y + (float)source.Y * rectangle.Height,
+                                (float)source.Width * rectangle.Width, (float)source.Height * rectangle.Height);
+                            var destination = (ExcelInterop.Range)target.Offset[row, column];
+                            var cellType = InferType(text);
+                            var write = PrepareWrite(destination, document, pageNumber, zone, cellType, text);
+                            if (source != null && source.Text != text) write.Snip.Comment = "Texte corrigé dans l'aperçu. OCR : " + source.Text;
+                            writes.Add(write);
+                        }
+                    }
+                }
+                else writes.Add(PrepareWrite(target, document, pageNumber, rectangle, type, recognized.Text));
+                var preserveValue = type == SnipType.Validation || type == SnipType.Exception;
+                if (!ConfirmOverwrite(writes, preserveValue)) return;
+                CommitWrites(writes, preserveValue);
                 canvas.ClearSelection();
-                SetStatus(type + " créé dans " + worksheet.Name + "!" + address + ". Dessinez le suivant.");
+                SetStatus(writes.Count + " preuve(s) créée(s). Sélectionnez la prochaine cellule ou dessinez la zone suivante.");
+                if (writes.Count > 0 && !preserveValue && target.Row < target.Worksheet.Rows.Count &&
+                    cells.GetSingleTarget().Address[true, true, ExcelInterop.XlReferenceStyle.xlA1, true] ==
+                    target.Address[true, true, ExcelInterop.XlReferenceStyle.xlA1, true])
+                    ((ExcelInterop.Range)target.Offset[type == SnipType.Table ? writes.Max(w => w.Target.Row) - target.Row + 1 : 1, 0]).Select();
             }
-            catch (Exception exception)
-            {
-                ShowError(exception);
-            }
-            finally
-            {
-                snipInProgress = false;
-            }
+            catch (OperationCanceledException) { SetStatus("Extraction annulée."); }
+            catch (Exception exception) { ShowError(exception); }
+            finally { EndOperation(); }
         }
 
         public async void SearchSelection()
@@ -278,7 +296,7 @@ namespace Doctracker.AddIn.UI
             try
             {
                 var target = cells.GetSingleTarget();
-                var query = Convert.ToString(target.Value2);
+                var query = ExcelCellGateway.QueryText(target);
                 if (string.IsNullOrWhiteSpace(query))
                     throw new InvalidOperationException("La cellule active est vide.");
                 searchBox.Text = query;
@@ -290,52 +308,38 @@ namespace Doctracker.AddIn.UI
             }
         }
 
-        public void SearchFromPane()
+        public async void SearchFromPane()
         {
-            SearchDocumentsAsync(searchBox.Text);
+            await SearchDocumentsAsync(searchBox.Text);
         }
 
         private async Task SearchDocumentsAsync(string query)
         {
+            if (context.IsBusy) { SetStatus("Une opération est déjà en cours."); return; }
             try
             {
                 EnsureProject();
-                if (string.IsNullOrWhiteSpace(query))
-                    throw new InvalidOperationException("Saisissez un texte ou placez-vous sur une cellule à rechercher.");
-
-                var indexer = new DocumentIndexer(context.Store, ocr);
-                if (context.State.Documents.Any(item => item.IndexedPages.Count == 0))
-                {
-                    SetStatus("Indexation OCR des pièces restantes…");
-                    await Task.Run(() => indexer.IndexMissing(context.State,
-                        (name, page, count) => SetStatusThreadSafe(
-                            "OCR : " + name + " — page " + page + "/" + count)));
-                }
-
-                var results = context.Matcher.Find(context.State, query, 50)
-                    .Select(candidate => new SearchResultItem
-                    {
-                        Candidate = candidate,
-                        Document = context.State.Documents.First(item => item.Id == candidate.DocumentId)
-                    })
-                    .ToList();
-                searchResults.DataSource = null;
+                if (string.IsNullOrWhiteSpace(query)) throw new InvalidOperationException("Saisissez un texte à rechercher.");
+                BeginOperation();
+                var errors = await IndexMissingAsync();
+                var results = await Task.Run(() => context.Matcher.Find(context.State, query, 50)
+                    .Select(candidate => new SearchResultItem { Candidate = candidate,
+                        Document = context.State.Documents.First(item => item.Id == candidate.DocumentId) }).ToList());
+                operation.Token.ThrowIfCancellationRequested();
                 searchResults.DataSource = results;
-                searchResults.DisplayMember = "Caption";
-                SetStatus(results.Count == 0
-                    ? "Aucun résultat dans les pièces indexées."
-                    : results.Count + " résultat(s) trouvé(s) dans les pièces.");
+                SetStatus(results.Count + " résultat(s)." + (errors.Count > 0 ? " Attention : " + errors.Count + " pièce(s) non indexée(s)." : ""));
             }
-            catch (Exception exception)
-            {
-                ShowError(exception);
-            }
+            catch (OperationCanceledException) { SetStatus("Recherche annulée."); }
+            catch (Exception exception) { ShowError(exception); }
+            finally { EndOperation(); }
         }
 
         public void SetMatchingInputSelection()
         {
             try
             {
+                EnsureProject();
+                if (context.IsBusy) return;
                 var range = cells.GetSelection();
                 ValidateMatchingColumn(range, "recherche");
                 matchingInputSheet = ((ExcelInterop.Worksheet)range.Worksheet).Name;
@@ -352,6 +356,8 @@ namespace Doctracker.AddIn.UI
         {
             try
             {
+                EnsureProject();
+                if (context.IsBusy) return;
                 var range = cells.GetSelection();
                 ValidateMatchingColumn(range, "résultat");
                 matchingOutputSheet = ((ExcelInterop.Worksheet)range.Worksheet).Name;
@@ -366,88 +372,98 @@ namespace Doctracker.AddIn.UI
 
         public async void MatchSelection()
         {
+            if (context.IsBusy) { SetStatus("Une opération est déjà en cours."); return; }
             try
             {
                 EnsureProject();
                 var input = ResolveMatchingRange(matchingInputSheet, matchingInputAddress);
                 var output = ResolveMatchingRange(matchingOutputSheet, matchingOutputAddress);
-                if (input == null || output == null)
-                    throw new InvalidOperationException(
-                        "Définissez d'abord la colonne de recherche puis la colonne de résultat dans le ruban.");
-                if (input.Columns.Count != 1 || output.Columns.Count != 1)
-                    throw new InvalidOperationException("Les deux sélections doivent contenir une seule colonne.");
-                if (input.Rows.Count > 5000)
-                    throw new InvalidOperationException("Limitez la plage de matching à 5 000 lignes.");
-                if (output.Cells.CountLarge != 1 && output.Rows.Count < input.Rows.Count)
-                    throw new InvalidOperationException("La colonne de résultat doit couvrir toutes les lignes de recherche.");
-
-                SetStatus("Indexation OCR des pièces non indexées…");
-                var indexer = new DocumentIndexer(context.Store, ocr);
-                await Task.Run(() => indexer.IndexMissing(context.State,
-                    (name, page, count) => SetStatusThreadSafe(
-                        "Indexation : " + name + " — page " + page + "/" + count)));
-
-                var matched = 0;
-                var outputStart = (ExcelInterop.Range)output.Cells[1, 1];
-                for (var row = 1; row <= input.Rows.Count; row++)
+                if (input == null || output == null) throw new InvalidOperationException("Définissez la plage de recherche puis la destination.");
+                var rowCount = input.Rows.Count;
+                var columnCount = input.Columns.Count;
+                ValidateMatchingColumn(input, "recherche");
+                if (output.Cells.CountLarge != 1 && (output.Rows.Count < rowCount || output.Columns.Count < columnCount))
+                    throw new InvalidOperationException("La destination doit couvrir toutes les lignes et colonnes (ou être une cellule de départ).");
+                var first = (ExcelInterop.Range)output.Cells[1, 1];
+                if (first.Row + rowCount - 1 > first.Worksheet.Rows.Count || first.Column + columnCount - 1 > first.Worksheet.Columns.Count)
+                    throw new InvalidOperationException("La destination dépasse la feuille.");
+                var destination = first.Resize[rowCount, columnCount];
+                ExcelCellGateway.ValidateWritable(destination);
+                if (input.Worksheet.Name == destination.Worksheet.Name && application.Intersect(input, destination) != null)
+                    throw new InvalidOperationException("Les plages de recherche et de résultat ne doivent pas se chevaucher.");
+                // Snapshot all inputs before yielding: worksheet edits cannot change this run's criteria.
+                var queries = new List<string[]>();
+                for (var row = 1; row <= rowCount; row++)
+                    queries.Add(Enumerable.Range(1, columnCount).Select(column => ExcelCellGateway.QueryText((ExcelInterop.Range)input.Cells[row, column])).ToArray());
+                BeginOperation();
+                var errors = await IndexMissingAsync();
+                if (errors.Count > 0) throw new InvalidOperationException("Matching interrompu : certaines pièces ne sont pas indexées.\n" + string.Join("\n", errors));
+                var results = await Task.Run(() =>
                 {
-                    var inputCell = (ExcelInterop.Range)input.Cells[row, 1];
-                    var outputCell = output.Cells.CountLarge == 1
-                        ? (ExcelInterop.Range)outputStart.Offset[row - 1, 0]
-                        : (ExcelInterop.Range)output.Cells[row, 1];
-                    var query = Convert.ToString(inputCell.Value2);
-                    if (string.IsNullOrWhiteSpace(query))
+                    var list = new List<IReadOnlyList<MatchCandidate>>();
+                    var cache = new Dictionary<string, IReadOnlyList<MatchCandidate>>();
+                    for (var index = 0; index < queries.Count; index++)
                     {
-                        outputCell.Value2 = string.Empty;
-                        continue;
+                        operation.Token.ThrowIfCancellationRequested();
+                        var key = string.Join("\u001f", queries[index]);
+                        IReadOnlyList<MatchCandidate> candidates;
+                        if (!cache.TryGetValue(key, out candidates)) cache[key] = candidates = context.Matcher.FindAllFields(context.State, queries[index]);
+                        list.Add(candidates);
+                        if (index % 25 == 0) SetStatusThreadSafe("Matching : ligne " + (index + 1) + "/" + rowCount);
                     }
-
-                    var candidate = context.Matcher.Find(context.State, query, 1).FirstOrDefault();
-                    if (candidate == null || candidate.Score < 0.40)
-                    {
-                        outputCell.Value2 = "Aucun rapprochement";
-                        continue;
-                    }
-
+                    return list;
+                });
+                operation.Token.ThrowIfCancellationRequested();
+                EnsureActiveWorkbook();
+                var writes = new List<PendingWrite>();
+                var ambiguous = 0;
+                var missing = 0;
+                for (var row = 0; row < rowCount; row++)
+                {
+                    if (queries[row].All(string.IsNullOrWhiteSpace)) continue;
+                    var candidates = results[row];
+                    if (candidates.Count == 0) { missing++; continue; }
+                    if (candidates.Count > 1) { ambiguous++; continue; }
+                    var candidate = candidates[0];
                     var document = context.State.Documents.First(item => item.Id == candidate.DocumentId);
-                    var worksheet = (ExcelInterop.Worksheet)outputCell.Worksheet;
-                    var resultText = document.OriginalName + " — page " + candidate.PageNumber +
-                                     " — score " + candidate.Score.ToString("P0");
-                    outputCell.Value2 = resultText;
-                    var snip = context.Snips.Create(
-                        context.State,
-                        document.Id,
-                        candidate.PageNumber,
-                        new NormalizedRectangle(0, 0, 1, 1),
-                        SnipType.Text,
-                        query,
-                        worksheet.Name,
-                        outputCell.Address[false, false, ExcelInterop.XlReferenceStyle.xlA1],
-                        Environment.UserName);
-                    snip.Comment = "Rapprochement automatique, score " +
-                                   candidate.Score.ToString("P0") + ". " + candidate.Evidence;
-                    context.Store.Save(context.State);
-                    cells.AttachProof(outputCell, snip, document);
-                    matched++;
-
-                    if (row % 25 == 0) SetStatus("Matching : ligne " + row + "/" + input.Rows.Count + "…");
+                    for (var column = 0; column < columnCount; column++)
+                    {
+                        var field = candidate.Fields[column];
+                        if (field == null) continue;
+                        var target = (ExcelInterop.Range)first.Offset[row, column];
+                        var zone = new RectangleF((float)field.X, (float)field.Y, (float)field.Width, (float)field.Height);
+                        var write = PrepareWrite(target, document, candidate.PageNumber, zone, InferType(field.Evidence), field.Evidence);
+                        write.Snip.Comment = "Rapprochement exact, à revoir." + (field.HasLocation ? "" : " Localisation : page entière.");
+                        writes.Add(write);
+                    }
                 }
-
-                SetStatus(matched + " ligne(s) rapprochée(s) sur " + input.Rows.Count +
-                          ". Résultats écrits dans la colonne de sortie ; validation humaine requise.");
+                // A re-run must not leave stale previous matches in unresolved rows.
+                var unresolved = new List<ExcelInterop.Range>();
+                for (var row = 0; row < rowCount; row++)
+                for (var column = 0; column < columnCount; column++)
+                    if (results[row].Count != 1 || string.IsNullOrWhiteSpace(queries[row][column]))
+                        unresolved.Add((ExcelInterop.Range)first.Offset[row, column]);
+                var occupied = writes.Any(write => ExcelCellGateway.HasContent(write.Target)) || unresolved.Any(ExcelCellGateway.HasContent);
+                if (occupied && MessageBox.Show(this, "La destination contient des données. Remplacer les résultats et vider les lignes sans correspondance ?", "Matching", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+                CommitWrites(writes, false, unresolved);
+                SetStatus(writes.Count + " preuve(s) créée(s) ; " + missing + " ligne(s) sans résultat ; " + ambiguous + " ambiguë(s). Revue requise.");
+                if (missing + ambiguous > 0) MessageBox.Show(this,
+                    "Lignes sans correspondance : " + string.Join(", ", Enumerable.Range(0, rowCount).Where(i => results[i].Count == 0 && queries[i].Any(q => !string.IsNullOrWhiteSpace(q))).Select(i => input.Row + i)) +
+                    "\nLignes ambiguës : " + string.Join(", ", Enumerable.Range(0, rowCount).Where(i => results[i].Count > 1).Select(i => input.Row + i)), "Résultats à compléter");
             }
-            catch (Exception exception)
-            {
-                ShowError(exception);
-            }
+            catch (OperationCanceledException) { SetStatus("Matching annulé avant insertion."); }
+            catch (Exception exception) { ShowError(exception); }
+            finally { EndOperation(); }
         }
 
         public bool TryNavigateFromCell(ExcelInterop.Range target)
         {
             try
             {
+                if (context.IsBusy || string.IsNullOrWhiteSpace(cells.GetSnipId(target))) return false;
                 EnsureProject();
-                var snipId = cells.GetSnipId(target);
+                BindDocuments();
+                var snipId = ChooseSnipId(target);
                 if (string.IsNullOrWhiteSpace(snipId)) return false;
                 return NavigateToSnip(snipId);
             }
@@ -462,9 +478,10 @@ namespace Doctracker.AddIn.UI
         {
             try
             {
+                if (context.IsBusy) return;
                 EnsureProject();
                 var target = cells.GetSingleTarget();
-                var snipId = cells.GetSnipId(target);
+                var snipId = ChooseSnipId(target);
                 if (string.IsNullOrWhiteSpace(snipId))
                     throw new InvalidOperationException("La cellule sélectionnée n'a aucune preuve Doctracker.");
                 NavigateToSnip(snipId);
@@ -479,9 +496,10 @@ namespace Doctracker.AddIn.UI
         {
             try
             {
+                if (context.IsBusy) return;
                 EnsureProject();
                 var target = cells.GetSingleTarget();
-                var snipId = cells.GetSnipId(target);
+                var snipId = ChooseSnipId(target);
                 var snip = context.State.Snips.FirstOrDefault(item => item.Id == snipId);
                 if (snip == null) throw new InvalidOperationException("La cellule sélectionnée n'a aucune preuve Doctracker.");
 
@@ -509,6 +527,7 @@ namespace Doctracker.AddIn.UI
             var document = context.State.Documents.FirstOrDefault(item => item.Id == snip.DocumentId);
             if (document == null) return false;
 
+            BindDocuments();
             SelectDocument(document.Id);
             canvas.NavigateTo(context.Store.ResolveDocumentPath(document), snip);
             SetStatus(document.OriginalName + " — page " + snip.PageNumber + " — " + snip.Status);
@@ -607,11 +626,12 @@ namespace Doctracker.AddIn.UI
             try
             {
                 var document = SelectedDocument;
-                if (document != null)
+                if (document != null && context.State.Documents.Any(item => item.Id == document.Id))
                 {
-                    canvas.LoadDocument(context.Store.ResolveDocumentPath(document));
+                    if (!string.Equals(canvas.CurrentPath, context.Store.ResolveDocumentPath(document), StringComparison.OrdinalIgnoreCase)) canvas.LoadDocument(context.Store.ResolveDocumentPath(document));
                     SetStatus(document.OriginalName + " — sélectionnez une zone ou recherchez dans les pièces.");
                 }
+                else canvas.ClearDocument();
             }
             catch (Exception exception)
             {
@@ -626,7 +646,9 @@ namespace Doctracker.AddIn.UI
                 var result = searchResults.SelectedItem as SearchResultItem;
                 if (result == null) return;
                 SelectDocument(result.Document.Id);
-                canvas.NavigateTo(context.Store.ResolveDocumentPath(result.Document), result.Candidate.PageNumber);
+                canvas.NavigateTo(context.Store.ResolveDocumentPath(result.Document), new SnipRecord {
+                    PageNumber = result.Candidate.PageNumber, X = result.Candidate.X, Y = result.Candidate.Y,
+                    Width = result.Candidate.Width, Height = result.Candidate.Height });
                 SetStatus(result.Document.OriginalName + " — page " + result.Candidate.PageNumber +
                           " — score " + result.Candidate.Score.ToString("P0"));
             }
@@ -640,7 +662,16 @@ namespace Doctracker.AddIn.UI
 
         private void EnsureProject()
         {
-            context.Ensure(application.ActiveWorkbook);
+            EnsureActiveWorkbook();
+            context.Ensure(workbook);
+            if (boundProjectPath != context.WorkbookPath)
+            {
+                boundProjectPath = context.WorkbookPath;
+                matchingInputSheet = matchingInputAddress = matchingOutputSheet = matchingOutputAddress = null;
+                searchResults.DataSource = null;
+                canvas.ClearDocument();
+                BindDocuments();
+            }
         }
 
         private void BindDocuments()
@@ -654,8 +685,9 @@ namespace Doctracker.AddIn.UI
             if (selectedId != null) SelectDocument(selectedId);
             if (documents.SelectedIndex < 0 && documents.Items.Count > 0) documents.SelectedIndex = 0;
 
+            Documents_SelectedIndexChanged(this, EventArgs.Empty);
             var total = context.State.Documents.Count;
-            var indexed = context.State.Documents.Count(item => item.IndexedPages.Count > 0);
+            var indexed = context.State.Documents.Count(item => item.IndexComplete);
             ocrState.Text = total == 0
                 ? "Aucune pièce"
                 : total + " pièce(s) • " + indexed + " indexée(s) par OCR";
@@ -676,8 +708,8 @@ namespace Doctracker.AddIn.UI
 
         private static void ValidateMatchingColumn(ExcelInterop.Range range, string purpose)
         {
-            if (range == null || range.Columns.Count != 1)
-                throw new InvalidOperationException("Sélectionnez une seule colonne pour le " + purpose + ".");
+            if (range == null || range.Areas.Count != 1 || range.Columns.Count > 10)
+                throw new InvalidOperationException("Sélectionnez une plage continue de 1 à 10 colonnes pour le " + purpose + ".");
             if (range.Rows.Count > 5000)
                 throw new InvalidOperationException("Limitez la sélection de " + purpose + " à 5 000 lignes.");
         }
@@ -685,15 +717,14 @@ namespace Doctracker.AddIn.UI
         private ExcelInterop.Range ResolveMatchingRange(string worksheetName, string address)
         {
             if (string.IsNullOrWhiteSpace(worksheetName) || string.IsNullOrWhiteSpace(address)) return null;
-            var workbook = application.ActiveWorkbook;
-            if (workbook == null) return null;
+
             var worksheet = workbook.Worksheets[worksheetName] as ExcelInterop.Worksheet;
             return worksheet == null ? null : worksheet.Range[address];
         }
 
         private void SetStatus(string message)
         {
-            status.Text = message;
+            if (!IsDisposed) status.Text = message;
         }
 
         private void SetStatusThreadSafe(string message)
@@ -701,7 +732,7 @@ namespace Doctracker.AddIn.UI
             if (IsDisposed || !IsHandleCreated) return;
             if (InvokeRequired)
             {
-                BeginInvoke(new Action<string>(SetStatus), message);
+                try { BeginInvoke(new Action<string>(SetStatus), message); } catch (InvalidOperationException) { }
             }
             else
             {
@@ -711,9 +742,155 @@ namespace Doctracker.AddIn.UI
 
         private void ShowError(Exception exception)
         {
+            if (IsDisposed) return;
             SetStatus("Erreur : " + exception.Message);
             MessageBox.Show(this, exception.Message, "Doctracker",
                 MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+
+        private void EnsureActiveWorkbook()
+        {
+            if (application.ActiveWorkbook == null || !string.Equals(application.ActiveWorkbook.FullName, workbook.FullName, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Revenez au classeur de cette opération.");
+            if (operation != null && !string.Equals(workbook.FullName, context.WorkbookPath, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Le classeur a changé de nom pendant l'opération. Relancez après actualisation.");
+        }
+
+        private void BeginOperation()
+        {
+            if (context.IsBusy) throw new InvalidOperationException("Une opération est déjà en cours dans ce classeur.");
+            context.IsBusy = true;
+            operation = new CancellationTokenSource();
+            canvas.Enabled = documents.Enabled = searchResults.Enabled = false;
+            cancelButton.Visible = true;
+        }
+
+        private void EndOperation()
+        {
+            if (operation == null) return;
+            operation.Dispose(); operation = null; context.IsBusy = false;
+            if (IsDisposed) return;
+            canvas.Enabled = documents.Enabled = searchResults.Enabled = true;
+            cancelButton.Visible = false;
+        }
+
+        private Task<List<string>> IndexMissingAsync()
+        {
+            var indexer = new DocumentIndexer(context.Store, ocr);
+            var token = operation.Token;
+            return Task.Run(() => indexer.IndexMissing(context.State,
+                (name, page, count) => SetStatusThreadSafe("Indexation : " + name + " — " + page + "/" + count), token));
+        }
+
+        private PendingWrite PrepareWrite(ExcelInterop.Range target, DocumentRecord document, int page, RectangleF zone, SnipType type, string text)
+        {
+            var snip = context.Snips.Prepare(context.State, document.Id, page,
+                new NormalizedRectangle(zone.X, zone.Y, zone.Width, zone.Height), type, text,
+                target.Worksheet.Name, target.Address[false, false, ExcelInterop.XlReferenceStyle.xlA1], Environment.UserName);
+            return new PendingWrite { Target = target, Snip = snip, Document = document };
+        }
+
+        private bool ConfirmOverwrite(List<PendingWrite> writes, bool preserveValue)
+        {
+            foreach (var write in writes) ExcelCellGateway.ValidateWritable(write.Target);
+            return preserveValue || !writes.Any(write => ExcelCellGateway.HasContent(write.Target)) ||
+                MessageBox.Show(this, "La destination contient déjà des données. Les remplacer par l'extraction ?", "Confirmer l'insertion",
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
+        }
+
+        private void CommitWrites(List<PendingWrite> writes, bool append, List<ExcelInterop.Range> clear = null)
+        {
+            EnsureActiveWorkbook();
+            operation?.Token.ThrowIfCancellationRequested();
+            var targets = writes.Select(write => write.Target).Concat(clear ?? new List<ExcelInterop.Range>()).ToList();
+            foreach (var target in targets) ExcelCellGateway.ValidateWritable(target);
+            var snapshots = targets.Select(cells.Snapshot).ToList();
+            var events = application.EnableEvents;
+            var updating = application.ScreenUpdating;
+            try
+            {
+                application.EnableEvents = false; application.ScreenUpdating = false;
+                foreach (var target in clear ?? new List<ExcelInterop.Range>())
+                {
+                    target.ClearContents();
+                    cells.RemoveProof(target);
+                }
+                foreach (var write in writes) cells.WriteSnip(write.Target, write.Snip, write.Document, append);
+                context.Snips.Commit(context.State, writes.Select(write => write.Snip).ToList());
+            }
+            catch (Exception failure)
+            {
+                var failures = new List<Exception> { failure };
+                foreach (var snapshot in snapshots)
+                    try { snapshot.Restore(); } catch (Exception rollback) { failures.Add(rollback); }
+                if (failures.Count > 1) throw new AggregateException("Insertion échouée et restauration incomplète. Vérifiez la destination avant de continuer.", failures);
+                throw;
+            }
+            finally { application.EnableEvents = events; application.ScreenUpdating = updating; }
+        }
+
+        private static SnipType InferType(string text)
+        {
+            var value = (text ?? "").Trim();
+            // Leading zero identifiers remain text.
+            decimal number;
+            if (!System.Text.RegularExpressions.Regex.IsMatch(value, @"^0\d") && new TextValueParser().TryParseAmount(value, out number)) return SnipType.Number;
+            if (System.Text.RegularExpressions.Regex.IsMatch(value, @"^\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}$"))
+                try { TextValueParser.ParseDate(value); return SnipType.Date; } catch (FormatException) { }
+            return SnipType.Text;
+        }
+
+        private static PageTextRecord ExtractIndexedSelection(DocumentRecord document, int pageNumber, RectangleF zone)
+        {
+            var page = document.IndexedPages.FirstOrDefault(item => item.PageNumber == pageNumber);
+            if (page == null || page.Words == null || page.Words.Count == 0) return null;
+            var selected = page.Words.Where(word =>
+                word.X + word.Width / 2 >= zone.Left && word.X + word.Width / 2 <= zone.Right &&
+                word.Y + word.Height / 2 >= zone.Top && word.Y + word.Height / 2 <= zone.Bottom).ToList();
+            if (selected.Count == 0) return null;
+            return new PageTextRecord
+            {
+                Text = string.Join("\n", selected.GroupBy(word => word.Line).Select(line => string.Join(" ", line.Select(word => word.Text)))),
+                Words = selected.Select(word => new WordRecord { Text = word.Text, Line = word.Line,
+                    X = Math.Max(0, (word.X - zone.X) / zone.Width), Y = Math.Max(0, (word.Y - zone.Y) / zone.Height),
+                    Width = Math.Min(word.X + word.Width, zone.Right) / zone.Width - Math.Max(word.X, zone.Left) / zone.Width,
+                    Height = Math.Min(word.Y + word.Height, zone.Bottom) / zone.Height - Math.Max(word.Y, zone.Top) / zone.Height }).ToList()
+            };
+        }
+
+        private string ChooseSnipId(ExcelInterop.Range target)
+        {
+            var ids = cells.GetSnipIds(target);
+            if (ids.Count < 2) return ids.FirstOrDefault();
+            using (var dialog = new Form { Text = "Choisir la preuve", Width = 540, Height = 260, StartPosition = FormStartPosition.CenterParent })
+            using (var list = new ListBox { Dock = DockStyle.Fill, DisplayMember = "Caption" })
+            using (var button = new Button { Text = "Ouvrir", Dock = DockStyle.Bottom, DialogResult = DialogResult.OK })
+            {
+                var items = ids.Select(id => context.State.Snips.FirstOrDefault(snip => snip.Id == id)).Where(snip => snip != null)
+                    .Select(snip => new { snip.Id, Caption = snip.Type + " — " + context.State.Documents.FirstOrDefault(doc => doc.Id == snip.DocumentId)?.OriginalName + " — page " + snip.PageNumber }).ToList();
+                list.DataSource = items;
+                dialog.Controls.Add(list); dialog.Controls.Add(button); dialog.AcceptButton = button;
+                if (dialog.ShowDialog(this) != DialogResult.OK || list.SelectedIndex < 0) return null;
+                return items[list.SelectedIndex].Id;
+            }
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                operation?.Cancel();
+                // Disposal waits for native OCR use to finish; no COM work runs on the worker.
+                ocr.Dispose();
+            }
+            base.Dispose(disposing);
+        }
+
+        private sealed class PendingWrite
+        {
+            public ExcelInterop.Range Target { get; set; }
+            public SnipRecord Snip { get; set; }
+            public DocumentRecord Document { get; set; }
         }
 
         private sealed class SearchResultItem

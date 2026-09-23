@@ -40,7 +40,7 @@ namespace Doctracker.Core.Services
                     return new ProjectState { WorkbookPath = workbookPath ?? string.Empty };
                 }
 
-                using (var stream = File.OpenRead(MetadataPath))
+                using (var stream = XmlReader.Create(MetadataPath, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null }))
                 {
                     var state = (ProjectState)serializer.Deserialize(stream);
                     NormalizeState(state);
@@ -94,6 +94,8 @@ namespace Doctracker.Core.Services
                 throw new ArgumentNullException(nameof(document));
             }
 
+            if (string.IsNullOrWhiteSpace(document.RelativePath) || Path.IsPathRooted(document.RelativePath))
+                throw new InvalidOperationException("Le chemin de la pièce doit être relatif au dossier.");
             var fullPath = Path.GetFullPath(Path.Combine(ProjectDirectory, document.RelativePath));
             var root = ProjectDirectory.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
             if (!fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase))
@@ -111,6 +113,9 @@ namespace Doctracker.Core.Services
                 throw new InvalidDataException("The Doctracker project file is empty or invalid.");
             }
 
+            if (state.SchemaVersion > 2) throw new InvalidDataException("Ce dossier nécessite une version plus récente de Doctracker.");
+            var legacy = state.SchemaVersion < 2;
+            state.SchemaVersion = 2;
             state.ProjectId = state.ProjectId ?? Guid.NewGuid().ToString("N");
             state.WorkbookPath = state.WorkbookPath ?? string.Empty;
             state.Documents = state.Documents ?? new System.Collections.Generic.List<DocumentRecord>();
@@ -125,6 +130,9 @@ namespace Doctracker.Core.Services
                 document.Sha256 = document.Sha256 ?? string.Empty;
                 document.IndexedPages = document.IndexedPages ??
                     new System.Collections.Generic.List<PageTextRecord>();
+                if (legacy) document.IndexComplete = document.PageCount > 0 && document.IndexedPages.Count == document.PageCount;
+                foreach (var page in document.IndexedPages)
+                    page.Words = page.Words ?? new System.Collections.Generic.List<WordRecord>();
             }
 
             foreach (var snip in state.Snips)

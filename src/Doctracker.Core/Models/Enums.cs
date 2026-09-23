@@ -6,7 +6,9 @@ namespace Doctracker.Core.Models
         Number,
         Date,
         Sum,
-        Table
+        Table,
+        Validation,
+        Exception
     }
 
     public enum ReviewStatus

@@ -68,7 +68,7 @@ namespace Doctracker.AddIn.Infrastructure
             }
         }
 
-        private static IEnumerable<string> GetDeploymentDirectories()
+        internal static IEnumerable<string> GetDeploymentDirectories()
         {
             var assembly = typeof(NativePdfiumLoader).Assembly;
             var directories = new List<string>();

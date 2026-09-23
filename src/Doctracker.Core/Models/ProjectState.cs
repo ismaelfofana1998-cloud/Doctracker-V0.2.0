@@ -9,7 +9,7 @@ namespace Doctracker.Core.Models
     public sealed class ProjectState
     {
         [XmlAttribute]
-        public int SchemaVersion { get; set; } = 1;
+        public int SchemaVersion { get; set; } = 2;
 
         public string ProjectId { get; set; } = Guid.NewGuid().ToString("N");
         public string WorkbookPath { get; set; } = string.Empty;
@@ -36,6 +36,8 @@ namespace Doctracker.Core.Models
         public string RelativePath { get; set; } = string.Empty;
         public string Sha256 { get; set; } = string.Empty;
         public int PageCount { get; set; }
+        public bool IndexComplete { get; set; }
+        public string IndexError { get; set; } = string.Empty;
         public DateTime AddedAtUtc { get; set; } = DateTime.UtcNow;
 
         [XmlArrayItem("Page")]
@@ -48,8 +50,23 @@ namespace Doctracker.Core.Models
         [XmlAttribute]
         public int PageNumber { get; set; }
 
+        // Preserve the V0.2 mixed-text representation when adding positional words.
         [XmlText]
         public string Text { get; set; } = string.Empty;
+
+        [XmlArrayItem("Word")]
+        public List<WordRecord> Words { get; set; } = new List<WordRecord>();
+    }
+
+    [Serializable]
+    public sealed class WordRecord
+    {
+        public string Text { get; set; } = string.Empty;
+        public int Line { get; set; }
+        public double X { get; set; }
+        public double Y { get; set; }
+        public double Width { get; set; }
+        public double Height { get; set; }
     }
 
     [Serializable]
@@ -97,5 +114,12 @@ namespace Doctracker.Core.Models
         public int PageNumber { get; set; }
         public double Score { get; set; }
         public string Evidence { get; set; } = string.Empty;
+        public bool IsExact { get; set; }
+        public bool HasLocation { get; set; }
+        public double X { get; set; }
+        public double Y { get; set; }
+        public double Width { get; set; } = 1;
+        public double Height { get; set; } = 1;
+        public List<MatchCandidate> Fields { get; set; } = new List<MatchCandidate>();
     }
 }

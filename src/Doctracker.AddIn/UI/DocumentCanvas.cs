@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.IO;
 using System.Windows.Forms;
 using Doctracker.AddIn.Infrastructure;
@@ -29,6 +30,7 @@ namespace Doctracker.AddIn.UI
         private Image currentImage;
         private string currentPath;
         private int pageIndex;
+        private int imagePageCount = 1;
         private double zoom = 1d;
         private bool fitToViewport = true;
         private Point dragStart;
@@ -106,7 +108,7 @@ namespace Doctracker.AddIn.UI
 
             picture = new PictureBox
             {
-                SizeMode = PictureBoxSizeMode.Normal,
+                SizeMode = PictureBoxSizeMode.StretchImage,
                 BackColor = Color.White,
                 Cursor = Cursors.Cross,
                 TabStop = false
@@ -125,6 +127,8 @@ namespace Doctracker.AddIn.UI
 
         public event EventHandler SelectionCompleted;
 
+        public string CurrentPath => currentPath;
+        public void ClearDocument() => DisposeDocument();
         public int CurrentPageNumber => pageIndex + 1;
         public bool HasDocument => currentImage != null;
         public bool HasSelection => normalizedSelection.HasValue;
@@ -149,6 +153,8 @@ namespace Doctracker.AddIn.UI
                     NativePdfiumLoader.EnsureLoaded();
                     pdf = PdfDocument.Load(path);
                 }
+                if (pdf == null)
+                    using (var image = Image.FromFile(path)) imagePageCount = DocumentIndexer.ImagePageCount(image);
                 RenderCurrentPage();
             }
             catch
@@ -226,7 +232,7 @@ namespace Doctracker.AddIn.UI
 
         private void ShowPage(int requestedIndex)
         {
-            var pageCount = pdf == null ? (currentPath == null ? 0 : 1) : pdf.PageCount;
+            var pageCount = pdf == null ? (currentPath == null ? 0 : imagePageCount) : pdf.PageCount;
             if (requestedIndex < 0 || requestedIndex >= pageCount) return;
             pageIndex = requestedIndex;
             normalizedSelection = null;
@@ -244,8 +250,9 @@ namespace Doctracker.AddIn.UI
 
             if (pdf != null)
             {
+                var size = DocumentIndexer.RenderSize(pdf.PageSizes[pageIndex]);
                 currentImage = pdf.Render(
-                    pageIndex, 1800, 2400, 144, 144,
+                    pageIndex, size.Width, size.Height, 144, 144,
                     PdfRenderFlags.Annotations | PdfRenderFlags.LcdText);
                 pageLabel.Text = "Page " + (pageIndex + 1) + " / " + pdf.PageCount;
             }
@@ -253,9 +260,10 @@ namespace Doctracker.AddIn.UI
             {
                 using (var source = Image.FromFile(currentPath))
                 {
+                    if (imagePageCount > 1) source.SelectActiveFrame(FrameDimension.Page, pageIndex);
                     currentImage = new Bitmap(source);
                 }
-                pageLabel.Text = "Page 1 / 1";
+                pageLabel.Text = "Page " + (pageIndex + 1) + " / " + imagePageCount;
             }
             else
             {
@@ -279,7 +287,7 @@ namespace Doctracker.AddIn.UI
                 var widthRatio = availableWidth / (double)currentImage.Width;
                 var heightRatio = availableHeight / (double)currentImage.Height;
                 zoom = Math.Min(widthRatio, heightRatio);
-                zoom = Math.Max(0.2d, Math.Min(1.0d, zoom));
+                zoom = Math.Max(0.02d, Math.Min(1.0d, zoom));
             }
 
             var width = Math.Max(2, (int)Math.Round(currentImage.Width * zoom));
@@ -296,7 +304,7 @@ namespace Doctracker.AddIn.UI
             fitToViewport = fit;
             if (!fitToViewport)
             {
-                zoom = Math.Max(0.35d, Math.Min(3.0d, requestedZoom));
+                zoom = Math.Max(0.02d, Math.Min(3.0d, requestedZoom));
             }
             UpdatePictureLayout();
         }
@@ -313,13 +321,15 @@ namespace Doctracker.AddIn.UI
             if (e.Button == MouseButtons.Middle)
             {
                 panning = true;
-                panStart = e.Location;
+                picture.Capture = true;
+                panStart = picture.PointToScreen(e.Location);
                 panOrigin = viewport.AutoScrollPosition;
                 picture.Cursor = Cursors.SizeAll;
                 return;
             }
 
             if (e.Button != MouseButtons.Left) return;
+            picture.Capture = true;
             dragging = true;
             dragStart = Clamp(e.Location, picture.ClientRectangle);
             dragEnd = dragStart;
@@ -330,8 +340,9 @@ namespace Doctracker.AddIn.UI
         {
             if (panning)
             {
-                var x = -panOrigin.X - (e.X - panStart.X);
-                var y = -panOrigin.Y - (e.Y - panStart.Y);
+                var screen = picture.PointToScreen(e.Location);
+                var x = -panOrigin.X - (screen.X - panStart.X);
+                var y = -panOrigin.Y - (screen.Y - panStart.Y);
                 viewport.AutoScrollPosition = new Point(Math.Max(0, x), Math.Max(0, y));
                 return;
             }
@@ -346,12 +357,14 @@ namespace Doctracker.AddIn.UI
             if (panning && e.Button == MouseButtons.Middle)
             {
                 panning = false;
+                picture.Capture = false;
                 picture.Cursor = Cursors.Cross;
                 return;
             }
 
             if (!dragging || e.Button != MouseButtons.Left) return;
             dragging = false;
+            picture.Capture = false;
             dragEnd = Clamp(e.Location, picture.ClientRectangle);
             var rectangle = NormalizeScreenRectangle(dragStart, dragEnd);
             if (rectangle.Width >= 4 && rectangle.Height >= 4)
@@ -398,7 +411,7 @@ namespace Doctracker.AddIn.UI
 
         private void UpdateNavigationState()
         {
-            var pageCount = pdf == null ? (currentPath == null ? 0 : 1) : pdf.PageCount;
+            var pageCount = pdf == null ? (currentPath == null ? 0 : imagePageCount) : pdf.PageCount;
             previousButton.Enabled = pageIndex > 0;
             nextButton.Enabled = pageIndex >= 0 && pageIndex < pageCount - 1;
             zoomOutButton.Enabled = currentImage != null;
@@ -440,6 +453,7 @@ namespace Doctracker.AddIn.UI
 
         private void DisposeDocument()
         {
+            dragging = false; panning = false; picture.Capture = false;
             picture.Image = null;
             if (currentImage != null) currentImage.Dispose();
             if (pdf != null) pdf.Dispose();

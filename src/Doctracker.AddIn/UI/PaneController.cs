@@ -1,4 +1,8 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Windows.Forms;
+using Doctracker.AddIn.Infrastructure;
 using Doctracker.Core.Models;
 using Microsoft.Office.Core;
 using ExcelInterop = Microsoft.Office.Interop.Excel;
@@ -7,100 +11,81 @@ namespace Doctracker.AddIn.UI
 {
     internal sealed class PaneController : IDisposable
     {
-        private readonly DoctrackerPaneControl control;
-        private readonly Microsoft.Office.Tools.CustomTaskPane pane;
+        private readonly ThisAddIn addIn;
+        private readonly ExcelInterop.Application application;
+        private readonly Dictionary<int, WindowPane> panes = new Dictionary<int, WindowPane>();
+        private readonly Dictionary<ExcelInterop.Workbook, WorkbookProjectContext> contexts = new Dictionary<ExcelInterop.Workbook, WorkbookProjectContext>();
+        public PaneController(ThisAddIn addIn, ExcelInterop.Application application) { this.addIn = addIn; this.application = application; }
 
-        public PaneController(ThisAddIn addIn, ExcelInterop.Application application)
+        private WindowPane Current()
         {
-            if (addIn == null) throw new ArgumentNullException(nameof(addIn));
-            control = new DoctrackerPaneControl(application);
-            pane = addIn.CustomTaskPanes.Add(control, "Doctracker");
+            var workbook = application.ActiveWorkbook;
+            var window = application.ActiveWindow;
+            if (workbook == null || window == null) throw new InvalidOperationException("Ouvrez un classeur Excel.");
+            WindowPane entry;
+            if (panes.TryGetValue(window.Hwnd, out entry))
+            {
+                if (Equals(entry.Workbook, workbook)) return entry;
+                addIn.CustomTaskPanes.Remove(entry.Pane); entry.Control.Dispose(); panes.Remove(window.Hwnd);
+            }
+            WorkbookProjectContext context;
+            if (!contexts.TryGetValue(workbook, out context)) contexts[workbook] = context = new WorkbookProjectContext();
+            var control = new DoctrackerPaneControl(application, workbook, context);
+            var pane = addIn.CustomTaskPanes.Add(control, "Doctracker", window);
             pane.DockPosition = MsoCTPDockPosition.msoCTPDockPositionRight;
-            pane.Width = 760;
-            pane.Visible = false;
+            pane.Width = Math.Max(400, Math.Min(760, (int)(window.Width * 0.55)));
+            entry = new WindowPane { Workbook = workbook, Control = control, Pane = pane };
+            panes[window.Hwnd] = entry;
+            return entry;
         }
 
-        public void Toggle()
+        private void Run(Action<WindowPane> action)
         {
-            pane.Visible = !pane.Visible;
-            if (pane.Visible) control.RefreshProject();
+            try { action(Current()); }
+            catch (Exception exception) { MessageBox.Show(exception.Message, "Doctracker", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
         }
-
-        public void Show()
-        {
-            pane.Visible = true;
-            control.RefreshProject();
-        }
-
-        public void ImportDocuments()
-        {
-            Show();
-            control.ImportDocuments();
-        }
-
-        public void CreateSnip(SnipType type)
-        {
-            Show();
-            control.SetSnipMode(type);
-        }
-
-        public void SetSnipMode(SnipType? type)
-        {
-            Show();
-            control.SetSnipMode(type);
-        }
-
+        private void Show(Action<DoctrackerPaneControl> action) => Run(entry =>
+        { entry.Pane.Visible = true; entry.Control.RefreshProject(); action(entry.Control); });
+        public void Toggle() => Run(entry => { entry.Pane.Visible = !entry.Pane.Visible; if (entry.Pane.Visible) entry.Control.RefreshProject(); });
+        public void ImportDocuments() => Show(control => control.ImportDocuments());
+        public void SetSnipMode(SnipType? type) => Show(control => control.SetSnipMode(type));
         public bool IsSnipMode(SnipType type)
         {
-            return control.IsSnipMode(type);
+            var window = application.ActiveWindow;
+            WindowPane entry;
+            return window != null && panes.TryGetValue(window.Hwnd, out entry) && entry.Control.IsSnipMode(type);
         }
-
-        public void MatchSelection()
-        {
-            Show();
-            control.MatchSelection();
-        }
-
-        public void SetMatchingInputSelection()
-        {
-            Show();
-            control.SetMatchingInputSelection();
-        }
-
-        public void SetMatchingOutputSelection()
-        {
-            Show();
-            control.SetMatchingOutputSelection();
-        }
-
-        public void SearchSelection()
-        {
-            Show();
-            control.SearchSelection();
-        }
-
-        public void NavigateFromSelection()
-        {
-            Show();
-            control.NavigateFromSelection();
-        }
-
-        public void ReviewSelection()
-        {
-            Show();
-            control.ReviewSelection();
-        }
-
+        public void MatchSelection() => Show(control => control.MatchSelection());
+        public void SetMatchingInputSelection() => Show(control => control.SetMatchingInputSelection());
+        public void SetMatchingOutputSelection() => Show(control => control.SetMatchingOutputSelection());
+        public void SearchSelection() => Show(control => control.SearchSelection());
+        public void NavigateFromSelection() => Show(control => control.NavigateFromSelection());
+        public void ReviewSelection() => Show(control => control.ReviewSelection());
         public bool TryNavigateFromCell(ExcelInterop.Range target)
         {
-            var result = control.TryNavigateFromCell(target);
-            if (result) pane.Visible = true;
-            return result;
+            // Normal Excel double-click must never create a project or show an error.
+            if (target == null || target.Cells.CountLarge != 1 || target.Comment == null ||
+                !((string)target.Comment.Text()).Contains(Excel.ExcelCellGateway.MarkerPrefix)) return false;
+            var found = false;
+            Run(entry => { found = entry.Control.TryNavigateFromCell(target); if (found) entry.Pane.Visible = true; });
+            return found;
         }
-
+        public bool IsBusy(ExcelInterop.Workbook workbook) => contexts.TryGetValue(workbook, out var context) && context.IsBusy;
+        public void RefreshVisible()
+        {
+            var window = application.ActiveWindow;
+            if (window != null && panes.TryGetValue(window.Hwnd, out var entry) && entry.Pane.Visible) entry.Control.RefreshProject();
+        }
         public void Dispose()
         {
-            control.Dispose();
+            foreach (var entry in panes.Values) entry.Control.Dispose();
+            panes.Clear(); contexts.Clear();
+        }
+        private sealed class WindowPane
+        {
+            public ExcelInterop.Workbook Workbook;
+            public DoctrackerPaneControl Control;
+            public Microsoft.Office.Tools.CustomTaskPane Pane;
         }
     }
 }

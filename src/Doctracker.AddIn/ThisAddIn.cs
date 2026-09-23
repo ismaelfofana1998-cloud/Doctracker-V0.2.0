@@ -13,11 +13,19 @@ namespace Doctracker.AddIn
         private void ThisAddIn_Startup(object sender, EventArgs e)
         {
             Controller = new PaneController(this, Application);
+            Application.WindowActivate += Application_WindowActivate;
+            Application.WorkbookAfterSave += Application_WorkbookAfterSave;
+            Application.WorkbookBeforeSave += Application_WorkbookBeforeSave;
+            Application.WorkbookBeforeClose += Application_WorkbookBeforeClose;
             Application.SheetBeforeDoubleClick += Application_SheetBeforeDoubleClick;
         }
 
         private void ThisAddIn_Shutdown(object sender, EventArgs e)
         {
+            Application.WindowActivate -= Application_WindowActivate;
+            Application.WorkbookAfterSave -= Application_WorkbookAfterSave;
+            Application.WorkbookBeforeSave -= Application_WorkbookBeforeSave;
+            Application.WorkbookBeforeClose -= Application_WorkbookBeforeClose;
             Application.SheetBeforeDoubleClick -= Application_SheetBeforeDoubleClick;
             if (Controller != null) Controller.Dispose();
         }
@@ -30,6 +38,32 @@ namespace Doctracker.AddIn
             if (Controller != null && Controller.TryNavigateFromCell(target))
             {
                 cancel = true;
+            }
+        }
+
+        private void Application_WindowActivate(ExcelInterop.Workbook workbook, ExcelInterop.Window window)
+        {
+            Controller?.RefreshVisible();
+            DoctrackerRibbon.Instance?.Refresh();
+        }
+        private void Application_WorkbookAfterSave(ExcelInterop.Workbook workbook, bool success)
+        {
+            if (success) Controller?.RefreshVisible();
+        }
+        private void Application_WorkbookBeforeSave(ExcelInterop.Workbook workbook, bool saveAs, ref bool cancel)
+        {
+            if (Controller?.IsBusy(workbook) == true)
+            {
+                cancel = true;
+                System.Windows.Forms.MessageBox.Show("Attendez ou annulez l'opération Doctracker avant d'enregistrer.", "Doctracker");
+            }
+        }
+        private void Application_WorkbookBeforeClose(ExcelInterop.Workbook workbook, ref bool cancel)
+        {
+            if (Controller?.IsBusy(workbook) == true)
+            {
+                cancel = true;
+                System.Windows.Forms.MessageBox.Show("Attendez ou annulez l'opération Doctracker avant de fermer ce classeur.", "Doctracker");
             }
         }
 

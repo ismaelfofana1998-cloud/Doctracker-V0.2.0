@@ -1,7 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Text.RegularExpressions;
 using Doctracker.Core.Models;
 using Doctracker.Core.Services;
 using PdfiumViewer;
@@ -12,37 +16,32 @@ namespace Doctracker.AddIn.Infrastructure
     {
         private readonly ProjectStore store;
         private readonly IOcrEngine ocr;
+        public DocumentIndexer(ProjectStore store, IOcrEngine ocr) { this.store = store; this.ocr = ocr; }
 
-        public DocumentIndexer(ProjectStore store, IOcrEngine ocr)
-        {
-            this.store = store ?? throw new ArgumentNullException(nameof(store));
-            this.ocr = ocr ?? throw new ArgumentNullException(nameof(ocr));
-        }
-
-        public void Index(ProjectState state, DocumentRecord document, Action<int, int> progress)
+        public void Index(ProjectState state, DocumentRecord document, Action<int, int> progress, CancellationToken cancellation)
         {
             var path = store.ResolveDocumentPath(document);
-            document.IndexedPages.Clear();
-
+            // Build separately: a failed/cancelled re-index must not erase the previous index.
+            var pages = new List<PageTextRecord>();
             if (string.Equals(Path.GetExtension(path), ".pdf", StringComparison.OrdinalIgnoreCase))
             {
                 NativePdfiumLoader.EnsureLoaded();
                 using (var pdf = PdfDocument.Load(path))
                 {
-                    document.PageCount = pdf.PageCount;
                     for (var index = 0; index < pdf.PageCount; index++)
                     {
-                        using (var rendered = pdf.Render(
-                            index, 1800, 2400, 144, 144,
-                            PdfRenderFlags.Annotations | PdfRenderFlags.LcdText))
-                        using (var bitmap = new Bitmap(rendered))
+                        cancellation.ThrowIfCancellationRequested();
+                        var native = pdf.GetPdfText(index);
+                        PageTextRecord page;
+                        if (!string.IsNullOrWhiteSpace(native)) page = ReadNativePage(pdf, index, native);
+                        else
                         {
-                            document.IndexedPages.Add(new PageTextRecord
-                            {
-                                PageNumber = index + 1,
-                                Text = ocr.Recognize(bitmap)
-                            });
+                            var size = RenderSize(pdf.PageSizes[index]);
+                            using (var rendered = pdf.Render(index, size.Width, size.Height, 144, 144, PdfRenderFlags.Annotations))
+                            using (var bitmap = new Bitmap(rendered)) page = ocr.Recognize(bitmap);
                         }
+                        page.PageNumber = index + 1;
+                        pages.Add(page);
                         progress?.Invoke(index + 1, pdf.PageCount);
                     }
                 }
@@ -50,36 +49,91 @@ namespace Doctracker.AddIn.Infrastructure
             else
             {
                 using (var original = Image.FromFile(path))
-                using (var bitmap = new Bitmap(original))
                 {
-                    document.PageCount = 1;
-                    document.IndexedPages.Add(new PageTextRecord
+                    var count = ImagePageCount(original);
+                    for (var index = 0; index < count; index++)
                     {
-                        PageNumber = 1,
-                        Text = ocr.Recognize(bitmap)
-                    });
-                    progress?.Invoke(1, 1);
+                        cancellation.ThrowIfCancellationRequested();
+                        if (count > 1) original.SelectActiveFrame(FrameDimension.Page, index);
+                        using (var bitmap = new Bitmap(original))
+                        {
+                            var page = ocr.Recognize(bitmap);
+                            page.PageNumber = index + 1;
+                            pages.Add(page);
+                        }
+                        progress?.Invoke(index + 1, count);
+                    }
                 }
             }
-
-            state.AuditTrail.Add(new AuditEventRecord
+            cancellation.ThrowIfCancellationRequested();
+            var oldPages = document.IndexedPages;
+            var oldCount = document.PageCount;
+            var oldComplete = document.IndexComplete;
+            var oldError = document.IndexError;
+            document.IndexedPages = pages;
+            document.PageCount = pages.Count;
+            document.IndexComplete = true;
+            document.IndexError = "";
+            var entry = new AuditEventRecord { Actor = Environment.UserName, Action = "DocumentIndexed",
+                EntityType = "Document", EntityId = document.Id, Details = pages.Count + " page(s)" };
+            state.AuditTrail.Add(entry);
+            try { store.Save(state); }
+            catch
             {
-                Actor = Environment.UserName,
-                Action = "DocumentIndexed",
-                EntityType = "Document",
-                EntityId = document.Id,
-                Details = document.IndexedPages.Count + " page(s)"
-            });
-            store.Save(state);
-        }
-
-        public void IndexMissing(ProjectState state, Action<string, int, int> progress)
-        {
-            foreach (var document in state.Documents.Where(item => item.IndexedPages.Count == 0))
-            {
-                Index(state, document,
-                    (page, count) => progress?.Invoke(document.OriginalName, page, count));
+                document.IndexedPages = oldPages; document.PageCount = oldCount;
+                document.IndexComplete = oldComplete; document.IndexError = oldError;
+                state.AuditTrail.Remove(entry);
+                throw;
             }
         }
+
+        public List<string> IndexMissing(ProjectState state, Action<string, int, int> progress, CancellationToken cancellation)
+        {
+            var errors = new List<string>();
+            foreach (var document in state.Documents.Where(item => !item.IndexComplete).ToList())
+            {
+                cancellation.ThrowIfCancellationRequested();
+                try { Index(state, document, (page, count) => progress?.Invoke(document.OriginalName, page, count), cancellation); }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception exception)
+                {
+                    document.IndexError = exception.Message;
+                    errors.Add(document.OriginalName + " : " + exception.Message);
+                }
+            }
+            if (errors.Count > 0) store.Save(state);
+            return errors;
+        }
+
+        private static PageTextRecord ReadNativePage(PdfDocument pdf, int index, string text)
+        {
+            var page = new PageTextRecord { Text = text };
+            var size = pdf.PageSizes[index];
+            var line = 0;
+            double previousY = -1;
+            foreach (Match match in Regex.Matches(text, @"\S+"))
+            {
+                var boxes = pdf.GetTextBounds(new PdfTextSpan(index, match.Index, match.Length));
+                if (boxes.Count == 0) continue;
+                // PDFium uses a bottom-left origin and negative rectangle heights.
+                var x = Math.Max(0, boxes.Min(box => box.Bounds.Left)) / size.Width;
+                var y = Math.Max(0, size.Height - boxes.Max(box => box.Bounds.Top)) / size.Height;
+                var right = Math.Min(size.Width, boxes.Max(box => box.Bounds.Right)) / size.Width;
+                var bottom = Math.Min(size.Height, size.Height - boxes.Min(box => box.Bounds.Bottom)) / size.Height;
+                if (right <= x || bottom <= y) continue;
+                if (previousY < 0 || Math.Abs(y - previousY) > (bottom - y) * 0.6) line++;
+                previousY = y;
+                page.Words.Add(new WordRecord { Text = match.Value, Line = line, X = x, Y = y, Width = right - x, Height = bottom - y });
+            }
+            return page;
+        }
+
+        internal static Size RenderSize(SizeF page)
+        {
+            var scale = Math.Min(2.5, 3000d / Math.Max(page.Width, page.Height));
+            return new Size(Math.Max(1, (int)Math.Ceiling(page.Width * scale)), Math.Max(1, (int)Math.Ceiling(page.Height * scale)));
+        }
+        internal static int ImagePageCount(Image image) => image.FrameDimensionsList.Contains(FrameDimension.Page.Guid)
+            ? image.GetFrameCount(FrameDimension.Page) : 1;
     }
 }
