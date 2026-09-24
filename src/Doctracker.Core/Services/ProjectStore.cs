@@ -151,7 +151,7 @@ namespace Doctracker.Core.Services
                 if(pages.Count==0 || pages.Count!=document.PageCount)throw new InvalidDataException("Index incomplet.");
                 return document.IndexComplete;
             }
-            catch(Exception failure) when(failure is InvalidOperationException || failure is XmlException || failure is IOException)
+            catch(Exception failure) when(failure is InvalidOperationException || failure is XmlException || failure is IOException || failure is InvalidDataException)
             {
                 document.IndexComplete=false;document.IndexError="Index à reconstruire : "+failure.GetBaseException().Message;
                 return false;

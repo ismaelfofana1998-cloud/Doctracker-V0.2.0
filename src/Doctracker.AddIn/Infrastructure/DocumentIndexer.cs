@@ -68,7 +68,7 @@ namespace Doctracker.AddIn.Infrastructure
             cancellation.ThrowIfCancellationRequested();
             List<PageTextRecord> oldPages;
             try{oldPages=document.IndexedPages;}
-            catch(Exception failure) when(failure is InvalidOperationException || failure is System.Xml.XmlException || failure is IOException)
+            catch(Exception failure) when(failure is InvalidOperationException || failure is System.Xml.XmlException || failure is IOException || failure is InvalidDataException)
             {oldPages=new List<PageTextRecord>();}
             var oldCount = document.PageCount;
             var oldComplete = document.IndexComplete;

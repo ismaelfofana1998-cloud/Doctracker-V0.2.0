@@ -180,7 +180,7 @@ namespace Doctracker.AddIn.UI
                         var current=list.SelectedItem is int n?n:doc.ReferenceNumber;
                         var available=CrossReferences.AvailableFor(context.State,reference.Text,doc.Id).Take(1000).ToList();
                         if(current>0 && CrossReferences.AvailableFor(context.State,reference.Text,doc.Id).Contains(current) && !available.Contains(current))available.Add(current);
-                        list.DataSource=available.OrderBy(n=>n).ToList();if(available.Contains(current))list.SelectedItem=current;
+                        list.DataSource=available.OrderBy(number=>number).ToList();if(available.Contains(current))list.SelectedItem=current;
                     };
                     reference.Leave+=(s,e)=>refresh();refresh();
                     var common=new CheckBox {Text="Réutiliser ce préfixe pour les prochaines Xref",Checked=true,Dock=DockStyle.Top,AutoSize=true};
