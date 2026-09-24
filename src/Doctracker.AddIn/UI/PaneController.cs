@@ -93,6 +93,8 @@ namespace Doctracker.AddIn.UI
             catch (Exception exception) { System.Diagnostics.Trace.WriteLine("Doctracker selection: " + exception.Message); }
         }
 
+        public void BeforeSave(ExcelInterop.Workbook workbook,bool saveAs) { if(contexts.TryGetValue(workbook,out var context))context.BeforeSave(saveAs); }
+        public void AfterSave(ExcelInterop.Workbook workbook,bool success) { if(contexts.TryGetValue(workbook,out var context))context.AfterSave(success); }
         public bool IsBusy(ExcelInterop.Workbook workbook) => contexts.TryGetValue(workbook, out var context) && context.IsBusy;
         public void RefreshVisible()
         {
@@ -118,12 +120,13 @@ namespace Doctracker.AddIn.UI
                 pair.Value.Control.Dispose();
                 panes.Remove(pair.Key);
             }
-            foreach (var book in contexts.Keys.Where(book => !openBooks.Contains(book)).ToList()) contexts.Remove(book);
+            foreach (var book in contexts.Keys.Where(book => !openBooks.Contains(book)).ToList()) { contexts[book].Dispose(); contexts.Remove(book); }
         }
 
         public void Dispose()
         {
             foreach (var entry in panes.Values) entry.Control.Dispose();
+            foreach(var context in contexts.Values)context.Dispose();
             panes.Clear(); contexts.Clear();
         }
         private sealed class WindowPane

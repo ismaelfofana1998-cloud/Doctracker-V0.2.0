@@ -32,7 +32,7 @@
     <UpdateEnabled>false</UpdateEnabled>
     <TargetCulture>fr-FR</TargetCulture>
     <FallbackCulture>en-US</FallbackCulture>
-    <ApplicationVersion>0.4.0.0</ApplicationVersion>
+    <ApplicationVersion>0.5.0.0</ApplicationVersion>
     <ApplicationRevision>0</ApplicationRevision>
     <BootstrapperEnabled>true</BootstrapperEnabled>
   </PropertyGroup>
@@ -110,6 +110,9 @@
     <Compile Include="Infrastructure\TesseractOcrEngine.cs" />
     <Compile Include="Infrastructure\DocumentIndexer.cs" />
     <Compile Include="Infrastructure\NativePdfiumLoader.cs" />
+    <Compile Include="Infrastructure\ExcelWorkbookParts.cs" />
+    <Compile Include="Infrastructure\AnnotatedPdfExporter.cs" />
+    <Compile Include="UI\ProjectActions.cs" />
     <Compile Include="UI\SnipTheme.cs" />
     <Compile Include="UI\WorkspaceView.cs" />
     <Compile Include="UI\DocumentCanvas.cs" />
@@ -135,6 +138,7 @@
     <PackageReference Include="PdfiumViewer" Version="2.13.0" />
     <PackageReference Include="PdfiumViewer.Native.x86_64.v8-xfa" Version="2018.4.8.256" />
     <PackageReference Include="PdfiumViewer.Native.x86.v8-xfa" Version="2018.4.8.256" />
+    <PackageReference Include="PDFsharp-GDI" Version="6.2.0" />
     <PackageReference Include="Tesseract" Version="5.2.0" />
   </ItemGroup>
   <ItemGroup>

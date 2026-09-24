@@ -144,6 +144,22 @@ try {
     $hit = $matcher.Find($state, 'FA-001', 1)[0]
     if (!$hit.IsExact -or !$hit.HasLocation -or $hit.Y -gt .4 -or $hit.Y -lt .1) { throw 'Native PDF word position incorrect.' }
     Write-Host 'PASS: PDFium deployment, landscape rendering, native PDF text and positional matching'
+    $exporterType=$assembly.GetType('Doctracker.AddIn.Infrastructure.AnnotatedPdfExporter',$true)
+    $snip.X=$hit.X; $snip.Y=$hit.Y; $snip.Width=$hit.Width; $snip.Height=$hit.Height
+    $snip.WorksheetName='Achats'; $snip.CellAddress='B2'
+    $document.TestReference='DAC B 30 040'; $document.ReferenceNumber=1
+    $exportPath=Join-Path $temp 'annotated.pdf'
+    $arguments=[object[]]::new(5)
+    $arguments[0]=$pdfPath; $arguments[1]=$document.PSObject.BaseObject
+    $arguments[2]=[Doctracker.Core.Models.SnipRecord[]]@($snip)
+    $arguments[3]=$exportPath; $arguments[4]=[Threading.CancellationToken]::None
+    $exporterType.GetMethod('Export',[Reflection.BindingFlags]'Static,Public').Invoke($null,$arguments) | Out-Null
+    $canvas.LoadDocument($exportPath)
+    $picture=$type.GetField('picture',$flags).GetValue($canvas)
+    if (!$canvas.HasDocument -or [Math]::Abs($picture.Image.Width/$picture.Image.Height-2) -gt .01) { throw 'Annotated PDF export did not preserve page orientation.' }
+    $picture.Image.Save((Join-Path $previewDirectory 'annotated-export.png'))
+    Write-Host 'PASS: flattened PDF export with colored snips and Xref, reopened in PDFium'
+
 } finally {
     if ($canvas) { $canvas.Dispose() }
     if ($ocr) { $ocr.Dispose() }

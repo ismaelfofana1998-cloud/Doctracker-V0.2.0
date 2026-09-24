@@ -10,7 +10,7 @@ namespace Doctracker.AddIn.UI
     // Excel-independent view: layout can be rendered and checked on Windows without COM.
     internal sealed class WorkspaceView : UserControl
     {
-        public readonly ComboBox Documents = new EvidenceComboBox { DropDownStyle = ComboBoxStyle.DropDownList, DisplayMember = "OriginalName", FlatStyle = FlatStyle.Flat, Dock = DockStyle.Fill, IntegralHeight = false, DropDownHeight = 320, AccessibleName = "Document actif" };
+        public readonly ComboBox Documents = new EvidenceComboBox { DropDownStyle = ComboBoxStyle.DropDownList, DisplayMember = "DisplayName", FlatStyle = FlatStyle.Flat, Dock = DockStyle.Fill, IntegralHeight = false, DropDownHeight = 320, AccessibleName = "Document actif" };
         public readonly TextBox Query = new TextBox { Dock = DockStyle.Fill, BorderStyle = BorderStyle.FixedSingle, AccessibleName = "Rechercher dans les documents" };
         public readonly ListBox Results = new ListBox { Dock = DockStyle.Fill, BorderStyle = BorderStyle.None, IntegralHeight = false, DisplayMember = "Caption", HorizontalScrollbar = true, AccessibleName = "Résultats de recherche" };
         public readonly ComboBox Proofs = new EvidenceComboBox { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList, DisplayMember = "Caption", FlatStyle = FlatStyle.Flat, AccessibleName = "Preuves de la cellule" };
@@ -22,6 +22,17 @@ namespace Doctracker.AddIn.UI
         public readonly Button Cancel = SnipTheme.Button("Annuler");
         public readonly ToolStripMenuItem Reindex = new ToolStripMenuItem("Réindexer les documents");
         public readonly ToolStripMenuItem Remove = new ToolStripMenuItem("Retirer le document sélectionné");
+        public readonly ToolStripMenuItem ImportFolder = new ToolStripMenuItem("Importer un dossier et ses sous-dossiers…");
+        public readonly ToolStripMenuItem Categorize = new ToolStripMenuItem("Catégoriser le document…");
+        public readonly ToolStripMenuItem CrossReference = new ToolStripMenuItem("Attribuer une Xref…");
+        public readonly ToolStripMenuItem SharedStorage = new ToolStripMenuItem("Stockage autonome / partagé…");
+        public readonly ToolStripMenuItem Backup = new ToolStripMenuItem("Sauvegarder toutes les pièces et liens…");
+        public readonly ToolStripMenuItem Restore = new ToolStripMenuItem("Restaurer une sauvegarde…");
+        public readonly ToolStripMenuItem RepairLinks = new ToolStripMenuItem("Réparer les liens des cellules…");
+        public readonly ToolStripMenuItem RecoveryFolder = new ToolStripMenuItem("Ouvrir les sauvegardes automatiques");
+        public readonly ToolStripMenuItem ExportPdf = new ToolStripMenuItem("Exporter la catégorie en PDF annotés…");
+        public readonly ComboBox Categories = new EvidenceComboBox { DropDownStyle=ComboBoxStyle.DropDownList, Dock=DockStyle.Fill, FlatStyle=FlatStyle.Flat, AccessibleName="Catégorie de documents" };
+        public readonly CheckBox PartialReferences = new CheckBox { Text="Références partielles", Checked=true, AutoSize=true, ForeColor=SnipTheme.Muted };
         public readonly DocumentCanvas Canvas = new DocumentCanvas();
         private readonly TableLayoutPanel resultsPanel;
         private readonly TableLayoutPanel proofPanel;
@@ -48,13 +59,18 @@ namespace Doctracker.AddIn.UI
             var picker = Rows(); picker.Dock=DockStyle.Fill;
             var caption = Label("DOCUMENTS"); caption.Font=new Font("Segoe UI",8F,FontStyle.Bold);
             Add(picker,caption); Add(picker,Documents); header.Controls.Add(picker,1,0); Add(root,header);
-            Documents.DropDown += (s,e) => { Documents.DropDownWidth = Math.Max(Documents.Width, Math.Min(900, Documents.Items.Cast<object>().Select(item=>TextRenderer.MeasureText(Convert.ToString(item.GetType().GetProperty("OriginalName")?.GetValue(item,null) ?? item),Documents.Font).Width+40).DefaultIfEmpty(300).Max())); };
+            Documents.DropDown += (s,e) => { Documents.DropDownWidth = Math.Max(Documents.Width, Math.Min(900, Documents.Items.Cast<object>().Select(item=>TextRenderer.MeasureText(Convert.ToString(item.GetType().GetProperty("DisplayName")?.GetValue(item,null) ?? item),Documents.Font).Width+40).DefaultIfEmpty(300).Max())); };
             var actions = new FlowLayoutPanel { AutoSize=true, Dock=DockStyle.Fill, Padding=new Padding(8,0,8,4), Margin=Padding.Empty };
             var more = SnipTheme.Button("", "More"); more.AccessibleName="Options des documents";
-            menu.Items.Add(Reindex); menu.Items.Add(Remove); more.Click+=(s,e)=>menu.Show(more,new Point(0,more.Height));
+            menu.Items.Add(ImportFolder);menu.Items.Add(Categorize);menu.Items.Add(CrossReference);
+            menu.Items.Add(new ToolStripSeparator());menu.Items.Add(SharedStorage);menu.Items.Add(Backup);menu.Items.Add(Restore);menu.Items.Add(RepairLinks);menu.Items.Add(RecoveryFolder);menu.Items.Add(ExportPdf);
+            menu.Items.Add(new ToolStripSeparator());menu.Items.Add(Reindex); menu.Items.Add(Remove); more.Click+=(s,e)=>menu.Show(more,new Point(0,more.Height));
             tips.SetToolTip(more,"Réindexer ou retirer un document");
             IndexState.Margin=new Padding(8,10,0,0);
             actions.Controls.Add(Import);actions.Controls.Add(more);actions.Controls.Add(IndexState);Add(root,actions);
+            var filters=Row(65,35);filters.Padding=new Padding(10,0,10,5);filters.Controls.Add(Categories,0,0);filters.Controls.Add(PartialReferences,1,0);Add(root,filters);
+            Categories.Items.Add("Toutes les catégories");Categories.SelectedIndex=0;
+            tips.SetToolTip(PartialReferences,"Cherche X300 dans 500X300Z35. Montants et dates restent exacts. Les ambiguïtés sont signalées.");
             var searchRow = Row(100,0);searchRow.ColumnStyles[1]=new ColumnStyle(SizeType.AutoSize);searchRow.Padding=new Padding(10,0,10,6);
             Query.Anchor=AnchorStyles.Left|AnchorStyles.Right;searchRow.Controls.Add(Query,0,0);searchRow.Controls.Add(Search,1,0);Add(root,searchRow);
             resultsPanel = Rows();resultsPanel.Padding=new Padding(12,0,12,8);resultsPanel.Visible=false;
@@ -103,7 +119,7 @@ namespace Doctracker.AddIn.UI
         private void SizeResults() { resultsPanel.RowStyles[1].Height=Math.Max(1,Math.Min(3,resultTotal))*Results.ItemHeight+8; }
         public void HideResults() { resultsPanel.Visible=false; }
         public void ShowProofs(bool visible) { proofPanel.Visible=visible; }
-        public void SetBusy(bool busy) { modes.Enabled=Import.Enabled=Search.Enabled=Proofs.Enabled=!busy;Cancel.Visible=busy; }
+        public void SetBusy(bool busy) { modes.Enabled=Import.Enabled=Search.Enabled=Proofs.Enabled=Categories.Enabled=PartialReferences.Enabled=!busy;Cancel.Visible=busy; }
         private static Label Label(string text) => new Label {Text=text,AutoSize=true,Dock=DockStyle.Fill,ForeColor=SnipTheme.Muted,Margin=Padding.Empty,Padding=new Padding(0,3,0,3)};
         private static TableLayoutPanel Rows()
         {

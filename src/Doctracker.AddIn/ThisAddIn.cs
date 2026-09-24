@@ -55,6 +55,7 @@ namespace Doctracker.AddIn
         }
         private void Application_WorkbookAfterSave(ExcelInterop.Workbook workbook, bool success)
         {
+            Controller?.AfterSave(workbook,success);
             if (success) Controller?.RefreshVisible();
         }
         private void Application_WorkbookBeforeSave(ExcelInterop.Workbook workbook, bool saveAs, ref bool cancel)
@@ -63,7 +64,10 @@ namespace Doctracker.AddIn
             {
                 cancel = true;
                 System.Windows.Forms.MessageBox.Show("Attendez ou annulez l'opération Doctracker avant d'enregistrer.", "Doctracker");
+                return;
             }
+            try { Controller?.BeforeSave(workbook,saveAs); }
+            catch(Exception exception) { cancel=true;System.Windows.Forms.MessageBox.Show("Enregistrement interrompu pour conserver les preuves : " + exception.Message,"Doctracker"); }
         }
         private void Application_WorkbookBeforeClose(ExcelInterop.Workbook workbook, ref bool cancel)
         {

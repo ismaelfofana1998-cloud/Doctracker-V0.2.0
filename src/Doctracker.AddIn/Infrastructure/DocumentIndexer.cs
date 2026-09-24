@@ -77,7 +77,7 @@ namespace Doctracker.AddIn.Infrastructure
             var entry = new AuditEventRecord { Actor = Environment.UserName, Action = "DocumentIndexed",
                 EntityType = "Document", EntityId = document.Id, Details = pages.Count + " page(s)" };
             state.AuditTrail.Add(entry);
-            try { store.Save(state); }
+            try { store.Save(state); document.ReleaseIndex(); }
             catch
             {
                 document.IndexedPages = oldPages; document.PageCount = oldCount;

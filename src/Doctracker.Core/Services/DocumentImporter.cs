@@ -20,7 +20,7 @@ namespace Doctracker.Core.Services
             this.store = store ?? throw new ArgumentNullException(nameof(store));
         }
 
-        public DocumentRecord Import(ProjectState state, string sourcePath, string actor)
+        public DocumentRecord Import(ProjectState state, string sourcePath, string actor, string category = null, bool persist = true)
         {
             if (state == null) throw new ArgumentNullException(nameof(state));
             if (!File.Exists(sourcePath)) throw new FileNotFoundException("Document not found.", sourcePath);
@@ -42,6 +42,8 @@ namespace Doctracker.Core.Services
                     Directory.CreateDirectory(Path.GetDirectoryName(existingPath));
                     File.Copy(sourcePath, existingPath, false);
                 }
+                AddCategory(duplicate, category);
+                if (persist) store.Save(state);
                 return duplicate;
             }
 
@@ -57,9 +59,11 @@ namespace Doctracker.Core.Services
                 OriginalName = Path.GetFileName(sourcePath),
                 RelativePath = Path.Combine("documents", safeName),
                 Sha256 = hash,
+                ByteLength = new FileInfo(destination).Length,
                 AddedAtUtc = DateTime.UtcNow
             };
 
+            AddCategory(document, category);
             state.Documents.Add(document);
             state.AuditTrail.Add(new AuditEventRecord
             {
@@ -69,7 +73,7 @@ namespace Doctracker.Core.Services
                 EntityId = document.Id,
                 Details = document.OriginalName
             });
-            try { store.Save(state); }
+            try { if (persist) store.Save(state); }
             catch
             {
                 state.Documents.Remove(document);
@@ -80,7 +84,12 @@ namespace Doctracker.Core.Services
             return document;
         }
 
-        private static string ComputeSha256(string path)
+        public static bool IsSupported(string path) => AllowedExtensions.Contains(Path.GetExtension(path).ToLowerInvariant());
+        public static void AddCategory(DocumentRecord document, string category)
+        {
+            if (!string.IsNullOrWhiteSpace(category) && !document.Categories.Contains(category.Trim(), StringComparer.OrdinalIgnoreCase)) document.Categories.Add(category.Trim());
+        }
+        public static string ComputeSha256(string path)
         {
             using (var stream = File.OpenRead(path))
             using (var sha = SHA256.Create())

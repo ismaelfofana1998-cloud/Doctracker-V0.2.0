@@ -5,4 +5,8 @@
     <AssemblyName>Doctracker.Core</AssemblyName>
     <Nullable>disable</Nullable>
   </PropertyGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.IO.Compression.FileSystem" />
+  </ItemGroup>
 </Project>

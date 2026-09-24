@@ -15,7 +15,7 @@ using ExcelInterop = Microsoft.Office.Interop.Excel;
 
 namespace Doctracker.AddIn.UI
 {
-    internal sealed class DoctrackerPaneControl : UserControl
+    internal sealed partial class DoctrackerPaneControl : UserControl
     {
         private readonly ExcelInterop.Application application;
         private readonly WorkbookProjectContext context;
@@ -62,6 +62,7 @@ namespace Doctracker.AddIn.UI
             AutoScaleDimensions = new SizeF(96, 96);
             view = new WorkspaceView();
             Controls.Add(view);
+            WireProjectActions();
             documents = view.Documents;
             searchBox = view.Query;
             searchResults = view.Results;
@@ -135,7 +136,7 @@ namespace Doctracker.AddIn.UI
         public void RefreshProject()
         {
             if (context.IsBusy || IsDisposed) return;
-            try { EnsureProject(); BindDocuments(); }
+            try { EnsureProject(); RefreshCategories(); BindDocuments(); }
             catch (Exception exception) { SetStatus(exception.Message); }
         }
 
@@ -180,7 +181,7 @@ namespace Doctracker.AddIn.UI
                         try { await Task.Run(() => context.Importer.Import(context.State, path, Environment.UserName)); }
                         catch (Exception exception) { errors.Add(Path.GetFileName(path) + " : " + exception.Message); }
                     }
-                    BindDocuments();
+                    RefreshCategories(); BindDocuments();
                     errors.AddRange(await IndexMissingAsync());
                     BindDocuments();
                     SetStatus(errors.Count == 0 ? "Pièces importées et prêtes pour la recherche." : "Import terminé avec " + errors.Count + " erreur(s).");
@@ -318,7 +319,8 @@ namespace Doctracker.AddIn.UI
                 if (string.IsNullOrWhiteSpace(query)) throw new InvalidOperationException("Saisissez un texte à rechercher.");
                 BeginOperation();
                 var errors = await IndexMissingAsync();
-                var results = await Task.Run(() => context.Matcher.Find(context.State, query, 50)
+                var scope=SearchScope();var partial=view.PartialReferences.Checked;
+                var results = await Task.Run(() => context.Matcher.Find(scope, query, 50, partial, operation.Token)
                     .Select(candidate => new SearchResultItem { Candidate = candidate,
                         Document = context.State.Documents.First(item => item.Id == candidate.DocumentId) }).ToList());
                 operation.Token.ThrowIfCancellationRequested();
@@ -395,21 +397,8 @@ namespace Doctracker.AddIn.UI
                 BeginOperation();
                 var errors = await IndexMissingAsync();
                 if (errors.Count > 0) throw new InvalidOperationException("Matching interrompu : certaines pièces ne sont pas indexées.\n" + string.Join("\n", errors));
-                var results = await Task.Run(() =>
-                {
-                    var list = new List<IReadOnlyList<MatchCandidate>>();
-                    var cache = new Dictionary<string, IReadOnlyList<MatchCandidate>>();
-                    for (var index = 0; index < queries.Count; index++)
-                    {
-                        operation.Token.ThrowIfCancellationRequested();
-                        var key = string.Join("\u001f", queries[index]);
-                        IReadOnlyList<MatchCandidate> candidates;
-                        if (!cache.TryGetValue(key, out candidates)) cache[key] = candidates = context.Matcher.FindAllFields(context.State, queries[index]);
-                        list.Add(candidates);
-                        if (index % 25 == 0) SetStatusThreadSafe("Matching : ligne " + (index + 1) + "/" + rowCount);
-                    }
-                    return list;
-                });
+                var scope=SearchScope();var partial=view.PartialReferences.Checked;
+                var results = await Task.Run(() => context.Matcher.FindBatch(scope,queries.Select(q=>(IReadOnlyList<string>)q).ToList(),partial,operation.Token));
                 operation.Token.ThrowIfCancellationRequested();
                 EnsureActiveWorkbook();
                 var writes = new List<PendingWrite>();
@@ -430,7 +419,7 @@ namespace Doctracker.AddIn.UI
                         var target = (ExcelInterop.Range)first.Offset[row, column];
                         var zone = new RectangleF((float)field.X, (float)field.Y, (float)field.Width, (float)field.Height);
                         var write = PrepareWrite(target, document, candidate.PageNumber, zone, InferType(field.Evidence), field.Evidence);
-                        write.Snip.Comment = "Rapprochement exact, à revoir." + (field.HasLocation ? "" : " Localisation : page entière.");
+                        write.Snip.Comment = (candidate.IsPartial ? "Rapprochement par référence partielle, à vérifier." : "Rapprochement exact, à revoir.") + (field.HasLocation ? "" : " Localisation : page entière.");
                         writes.Add(write);
                     }
                 }
@@ -442,6 +431,7 @@ namespace Doctracker.AddIn.UI
                         unresolved.Add((ExcelInterop.Range)first.Offset[row, column]);
                 var occupied = writes.Any(write => ExcelCellGateway.HasContent(write.Target)) || unresolved.Any(ExcelCellGateway.HasContent);
                 if (occupied && MessageBox.Show(this, "La destination contient des données. Remplacer les résultats et vider les lignes sans correspondance ?", "Matching", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+                if(results.Any(row=>row.Count==1 && row[0].IsPartial) && MessageBox.Show(this,"Des références partielles ont été trouvées. Insérer les valeurs réellement lues et leurs preuves pour revue ?","Références partielles",MessageBoxButtons.YesNo)!=DialogResult.Yes)return;
                 CommitWrites(writes, false, unresolved);
                 SetStatus(writes.Count + " preuve(s) créée(s) ; " + missing + " ligne(s) sans résultat ; " + ambiguous + " ambiguë(s). Revue requise.");
                 if (missing + ambiguous > 0) MessageBox.Show(this,
@@ -587,7 +577,7 @@ namespace Doctracker.AddIn.UI
                 canvas.NavigateTo(context.Store.ResolveDocumentPath(result.Document), new SnipRecord {
                     PageNumber = result.Candidate.PageNumber, X = result.Candidate.X, Y = result.Candidate.Y,
                     Width = result.Candidate.Width, Height = result.Candidate.Height });
-                SetStatus(result.Document.OriginalName + " — page " + result.Candidate.PageNumber +
+                SetStatus(result.Document.DisplayName + " — page " + result.Candidate.PageNumber +
                           " — score " + result.Candidate.Score.ToString("P0"));
             }
             catch (Exception exception)
@@ -616,13 +606,14 @@ namespace Doctracker.AddIn.UI
         private void BindDocuments()
         {
             var selectedId = SelectedDocument?.Id;
-            var listChanged = documents.Items.Count != context.State.Documents.Count ||
-                documents.Items.Cast<DocumentRecord>().Where((doc, index) => !ReferenceEquals(doc, context.State.Documents[index])).Any();
+            if(selectedId!=null && !VisibleDocuments().Any(d=>d.Id==selectedId))selectedId=null;
+            var listChanged = documents.Items.Count != VisibleDocuments().Count() ||
+                documents.Items.Cast<DocumentRecord>().Where((doc, index) => !ReferenceEquals(doc, VisibleDocuments().ElementAt(index))).Any();
             if (listChanged)
             {
                 documents.SelectedIndexChanged -= Documents_SelectedIndexChanged;
-                documents.DataSource = context.State.Documents.ToList();
-                documents.DisplayMember = "OriginalName";
+                documents.DataSource = VisibleDocuments().ToList();
+                documents.DisplayMember = "DisplayName";
                 if (selectedId != null) SelectDocument(selectedId);
                 if (documents.SelectedIndex < 0 && documents.Items.Count > 0) documents.SelectedIndex = 0;
                 documents.SelectedIndexChanged += Documents_SelectedIndexChanged;
@@ -632,11 +623,15 @@ namespace Doctracker.AddIn.UI
             var indexed = context.State.Documents.Count(item => item.IndexComplete);
             ocrState.Text = total == 0
                 ? "Aucune pièce"
-                : total + " pièce(s) • " + indexed + " indexée(s) par OCR";
+                : total + " pièce(s) • " + indexed + " indexée(s) • " + (string.IsNullOrEmpty(context.State.SharedVaultPath)?"Intégrées à Excel":"Partagées");
         }
 
         private void SelectDocument(string id)
         {
+            if(!documents.Items.Cast<DocumentRecord>().Any(d=>d.Id==id) && context.State.Documents.Any(d=>d.Id==id))
+            {
+                bindingCategories=true;view.Categories.SelectedIndex=0;bindingCategories=false;BindDocuments();
+            }
             for (var index = 0; index < documents.Items.Count; index++)
             {
                 var document = documents.Items[index] as DocumentRecord;
@@ -714,6 +709,7 @@ namespace Doctracker.AddIn.UI
             if (IsDisposed) return;
             canvas.Enabled = documents.Enabled = searchResults.Enabled = true;
             view.SetBusy(false);
+            context.MarkWorkbookDirty();
         }
 
         private Task<List<string>> IndexMissingAsync()
@@ -851,7 +847,7 @@ namespace Doctracker.AddIn.UI
         {
             public MatchCandidate Candidate { get; set; }
             public DocumentRecord Document { get; set; }
-            public string Caption => Document.OriginalName + " — page " + Candidate.PageNumber +
+            public string Caption => Document.DisplayName + " — page " + Candidate.PageNumber +
                                      " — score " + Candidate.Score.ToString("P0");
         }
     }

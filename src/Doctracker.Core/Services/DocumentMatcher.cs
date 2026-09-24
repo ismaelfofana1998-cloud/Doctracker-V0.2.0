@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -12,35 +13,67 @@ namespace Doctracker.Core.Services
     {
         private readonly TextValueParser parser = new TextValueParser();
 
-        public IReadOnlyList<MatchCandidate> Find(ProjectState state, string query, int maximum = 5)
+        public IReadOnlyList<MatchCandidate> Find(ProjectState state, string query, int maximum = 5, bool partialReferences = false, CancellationToken cancellation = default(CancellationToken))
         {
             if (state == null) throw new ArgumentNullException(nameof(state));
-            if (Normalize(query).Length == 0 || maximum <= 0) return new List<MatchCandidate>();
-            return state.Documents.SelectMany(document => document.IndexedPages.Select(page => Score(document, page, query)))
-                .Where(candidate => candidate.Score > 0).OrderByDescending(candidate => candidate.Score)
-                .ThenBy(candidate => candidate.DocumentId).ThenBy(candidate => candidate.PageNumber).Take(maximum).ToList();
-        }
-
-        // Automatic matching is deliberately stricter than interactive search:
-        // every populated field must occur on the same page, and ambiguous documents stay unresolved.
-        public IReadOnlyList<MatchCandidate> FindAllFields(ProjectState state, IReadOnlyList<string> queries)
-        {
-            if (state == null) throw new ArgumentNullException(nameof(state));
-            if (queries == null || queries.Count == 0 || queries.All(string.IsNullOrWhiteSpace))
-                return new List<MatchCandidate>();
             var result = new List<MatchCandidate>();
-            foreach (var document in state.Documents)
-            foreach (var page in document.IndexedPages)
+            if (Normalize(query).Length == 0 || maximum <= 0) return result;
+            foreach(var document in state.Documents)
             {
-                var fields = queries.Select(query => string.IsNullOrWhiteSpace(query) ? null : Score(document, page, query)).ToList();
-                if (fields.Where(field => field != null).Any(field => !field.IsExact)) continue;
-                result.Add(new MatchCandidate { DocumentId = document.Id, PageNumber = page.PageNumber,
-                    Score = 1, IsExact = true, Fields = fields });
+                try
+                {
+                    foreach(var page in document.IndexedPages)
+                    {
+                        cancellation.ThrowIfCancellationRequested();
+                        var candidate=Score(document,page,query,partialReferences);
+                        if(candidate.Score<=0)continue;
+                        result.Add(candidate);
+                        if(result.Count>maximum)result=result.OrderByDescending(c=>c.Score).ThenBy(c=>c.DocumentId).ThenBy(c=>c.PageNumber).Take(maximum).ToList();
+                    }
+                }
+                finally {document.ReleaseIndex();}
             }
-            return result;
+            return result.OrderByDescending(c=>c.Score).ThenBy(c=>c.DocumentId).ThenBy(c=>c.PageNumber).ToList();
+        }
+        public IReadOnlyList<MatchCandidate> FindAllFields(ProjectState state, IReadOnlyList<string> queries, bool partialReferences = false)
+        {
+            return FindBatch(state,new[]{queries},partialReferences,CancellationToken.None)[0];
+        }
+        // Pages are loaded once per batch, not once for every selected Excel row.
+        // Two candidates are sufficient to reject an ambiguous row.
+        public IReadOnlyList<MatchCandidate>[] FindBatch(ProjectState state, IReadOnlyList<IReadOnlyList<string>> rows, bool partialReferences, CancellationToken cancellation)
+        {
+            var result=rows.Select(row=>new List<MatchCandidate>()).ToArray();
+            foreach(var document in state.Documents)
+            {
+                try
+                {
+                    foreach(var page in document.IndexedPages)
+                    {
+                        cancellation.ThrowIfCancellationRequested();
+                        for(var row=0;row<rows.Count;row++)
+                        {
+                            if(row%25==0)cancellation.ThrowIfCancellationRequested();
+                            var queries=rows[row];
+                            if(result[row].Count>=2 || queries==null || queries.Count==0 || queries.All(string.IsNullOrWhiteSpace))continue;
+                            var fields=new List<MatchCandidate>();var match=true;
+                            foreach(var query in queries)
+                            {
+                                var field=string.IsNullOrWhiteSpace(query)?null:Score(document,page,query,partialReferences);
+                                fields.Add(field);
+                                if(field!=null && !field.IsExact && !(partialReferences && field.IsPartial)){match=false;break;}
+                            }
+                            if(match)result[row].Add(new MatchCandidate {DocumentId=document.Id,PageNumber=page.PageNumber,Score=1,
+                                IsExact=fields.Where(f=>f!=null).All(f=>f.IsExact),IsPartial=fields.Any(f=>f?.IsPartial==true),Fields=fields});
+                        }
+                    }
+                }
+                finally {document.ReleaseIndex();}
+            }
+            return result.Select(x=>(IReadOnlyList<MatchCandidate>)x).ToArray();
         }
 
-        private MatchCandidate Score(DocumentRecord document, PageTextRecord page, string query)
+        private MatchCandidate Score(DocumentRecord document, PageTextRecord page, string query, bool partialReferences)
         {
             var normalizedQuery = Normalize(query);
             var candidate = new MatchCandidate { DocumentId = document.Id, PageNumber = page.PageNumber };
@@ -55,28 +88,28 @@ namespace Doctracker.Core.Services
                 return Normalize(text) == normalizedQuery;
             };
 
+            var compactQuery = Compact(query);
+            var partialAllowed = partialReferences && !isDate && !isAmount && compactQuery.Length >= 3;
+            // Reject impossible reference pages before scanning word windows.
+            if(partialReferences && !isDate && !isAmount && !Compact(page.Text).Contains(compactQuery) && !Compact(document.OriginalName).Contains(compactQuery)) return candidate;
             // Prefer a real word location. Never join words from different lines for amounts.
             var words = page.Words ?? new List<WordRecord>();
             var maxWords = isAmount ? 6 : normalizedQuery.Split(' ').Length + 2;
-            for (var start = 0; start < words.Count; start++)
+            for(var count=1;count<=maxWords;count++)
+            for(var start=0;start+count<=words.Count;start++)
             {
-                var selected = new List<WordRecord>();
-                for (var end = start; end < words.Count && end < start + maxWords; end++)
-                {
-                    if ((isAmount || isDate) && words[end].Line != words[start].Line) break;
-                    selected.Add(words[end]);
-                    var value = string.Join(" ", selected.Select(word => word.Text));
-                    if (!exact(value)) continue;
-                    candidate.IsExact = true;
-                    candidate.Score = 1;
-                    candidate.Evidence = value;
-                    candidate.HasLocation = true;
-                    candidate.X = selected.Min(word => word.X);
-                    candidate.Y = selected.Min(word => word.Y);
-                    candidate.Width = selected.Max(word => word.X + word.Width) - candidate.X;
-                    candidate.Height = selected.Max(word => word.Y + word.Height) - candidate.Y;
-                    return candidate;
-                }
+                var selected=words.Skip(start).Take(count).ToList();
+                if(selected.Any(word=>word.Line!=selected[0].Line))continue;
+                var value=string.Join(" ",selected.Select(word=>word.Text));
+                var exactMatch=exact(value);
+                var partialMatch=!exactMatch && partialAllowed && Compact(value).Contains(compactQuery);
+                if(!exactMatch && !partialMatch)continue;
+                candidate.IsExact=exactMatch;candidate.IsPartial=partialMatch;candidate.Score=exactMatch?1:.9;
+                candidate.Evidence=value;candidate.HasLocation=true;
+                candidate.X=selected.Min(word=>word.X);candidate.Y=selected.Min(word=>word.Y);
+                candidate.Width=selected.Max(word=>word.X+word.Width)-candidate.X;
+                candidate.Height=selected.Max(word=>word.Y+word.Height)-candidate.Y;
+                return candidate;
             }
 
             // Legacy projects/native PDF pages may have plain text without word boxes.
@@ -94,6 +127,20 @@ namespace Doctracker.Core.Services
             }
             else
             {
+                if(partialAllowed)
+                {
+                    foreach(var line in Regex.Split(textValue,@"\r?\n"))
+                    {
+                        var tokens=Regex.Split(line.Trim(),@"\s+");
+                        for(var length=1;length<=Math.Min(8,tokens.Length);length++)
+                        for(var i=0;i+length<=tokens.Length;i++)
+                        {
+                            var evidence=string.Join(" ",tokens.Skip(i).Take(length));
+                            if(!Compact(evidence).Contains(compactQuery))continue;
+                            candidate.Evidence=evidence;candidate.IsExact=exact(evidence);candidate.IsPartial=!candidate.IsExact;candidate.Score=candidate.IsExact?1:.9;return candidate;
+                        }
+                    }
+                }
                 if ((" " + Normalize(textValue) + " ").Contains(" " + normalizedQuery + " "))
                     return Exact(candidate, FindSourceText(textValue, normalizedQuery));
                 if ((" " + Normalize(System.IO.Path.GetFileNameWithoutExtension(document.OriginalName)) + " ")
@@ -131,6 +178,8 @@ namespace Doctracker.Core.Services
             try { date = TextValueParser.ParseDate(text); return true; }
             catch (FormatException) { return false; }
         }
+
+        private static string Compact(string text) => Normalize(text).Replace(" ", "");
 
         private static string Normalize(string text)
         {
