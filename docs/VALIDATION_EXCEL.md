@@ -60,3 +60,10 @@ Ne pas utiliser de pièces confidentielles pour la première recette.
 La compilation GitHub et les smoke tests ne constituent pas l'exécution de cette
 recette. Consigner la version d'Excel, son architecture, le commit de l'installateur,
 les étapes réussies et les captures des échecs éventuels.
+
+## Recette 0.8
+
+- Fermer et rouvrir un classeur contenant des PDF scannés et natifs. Depuis une cellule contenant `BFA`, `X300` ou `6489,83`, utiliser **Rechercher la cellule**. Contrôler chaque occurrence, y compris les répétitions sur une page. Tester aussi la saisie libre, une cellule vide, un dossier vide, et la limite de 200 résultats.
+- Ouvrir **Documents > Classer les documents**. Créer `BL`, `Factures`, puis un client et ses sous-dossiers. Déplacer plusieurs pièces par glisser-déposer et avec **Déplacer vers**. Renommer/supprimer un dossier puis rouvrir le classeur : les documents et les preuves doivent rester disponibles.
+- Cliquer sur un commentaire, déplacer son cadre puis ses huit poignées à différents zooms. Tester Échap pendant un glissement, les bords de page, un cadre trop petit (ancien cadre conservé), puis double-cliquer pour changer texte/police. Sauvegarder, rouvrir et exporter.
+- Créer puis modifier une Xref (préfixe et numéro). Vérifier première page, nom affiché, export et notes Excel. Refuser le numéro d'une autre pièce, autoriser le retour à son propre ancien numéro. Tester une feuille protégée : aucune modification partielle ne doit subsister.

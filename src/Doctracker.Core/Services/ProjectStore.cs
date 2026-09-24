@@ -16,6 +16,7 @@ namespace Doctracker.Core.Services
         private readonly System.Collections.Concurrent.ConcurrentDictionary<string,string> verified = new System.Collections.Concurrent.ConcurrentDictionary<string,string>();
         private static readonly XmlSerializer reader = new XmlSerializer(typeof(ProjectState));
         private static readonly XmlSerializer writer = CreateMetadataSerializer();
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string,string> validatedIndexes = new System.Collections.Concurrent.ConcurrentDictionary<string,string>();
         private static readonly XmlSerializer indexSerializer = new XmlSerializer(typeof(List<PageTextRecord>));
         public event Action Saved;
         public Action<DocumentRecord> DocumentResolver { get; set; }
@@ -39,7 +40,7 @@ namespace Doctracker.Core.Services
         }
         public static ProjectState ReadMetadata(Stream input)
         {
-            using (var xml = XmlReader.Create(input, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = 256L * 1024 * 1024 }))
+            using (var xml = XmlReader.Create(input, new XmlReaderSettings { CheckCharacters = false, DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = 256L * 1024 * 1024 }))
             {
                 var state = (ProjectState)reader.Deserialize(xml);
                 NormalizeState(state); return state;
@@ -49,7 +50,7 @@ namespace Doctracker.Core.Services
         {
             using (var output = new MemoryStream())
             {
-                using (var xml = XmlWriter.Create(output, new XmlWriterSettings { Encoding = new UTF8Encoding(false), NewLineHandling = NewLineHandling.Entitize })) writer.Serialize(xml, state);
+                using (var xml = new SafeXmlWriter(XmlWriter.Create(output, new XmlWriterSettings { Encoding = new UTF8Encoding(false), NewLineHandling = NewLineHandling.Entitize }))) writer.Serialize(xml, state);
                 return output.ToArray();
             }
         }
@@ -94,8 +95,9 @@ namespace Doctracker.Core.Services
                         var key = Guid.NewGuid().ToString("N");
                         var path = IndexPath(key); Directory.CreateDirectory(Path.GetDirectoryName(path));
                         using (var stream = File.Create(path))
-                        using (var zip = new GZipStream(stream, CompressionMode.Compress)) indexSerializer.Serialize(zip, document.IndexedPages);
-                        document.IndexKey = key; document.MarkIndexSaved();
+                        using (var zip = new GZipStream(stream, CompressionMode.Compress))
+                        using (var xml = new SafeXmlWriter(XmlWriter.Create(zip,new XmlWriterSettings {Encoding=new UTF8Encoding(false)}))) indexSerializer.Serialize(xml, document.IndexedPages);
+                        document.IndexKey = key; document.MarkIndexSaved();validatedIndexes[key]=IndexStamp(path);
                     }
                     ConfigureIndex(document);
                 }
@@ -124,10 +126,37 @@ namespace Doctracker.Core.Services
                 if (!File.Exists(path)) { document.IndexComplete = false; return new List<PageTextRecord>(); }
                 using (var stream = File.OpenRead(path))
                 using (var zip = new GZipStream(stream, CompressionMode.Decompress))
-                using (var xml = XmlReader.Create(zip, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = 256L * 1024 * 1024 }))
-                    return (List<PageTextRecord>)indexSerializer.Deserialize(xml);
+                using (var xml = XmlReader.Create(zip, new XmlReaderSettings { CheckCharacters = false, DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = 256L * 1024 * 1024 }))
+                {
+                    var pages=(List<PageTextRecord>)indexSerializer.Deserialize(xml);
+                    foreach(var page in pages)
+                    {
+                        page.Text=SafeXmlWriter.Clean(page.Text);
+                        foreach(var word in page.Words)word.Text=SafeXmlWriter.Clean(word.Text);
+                    }
+                    validatedIndexes[document.IndexKey]=IndexStamp(path);return pages;
+                }
             };
             if (!File.Exists(IndexPath(document.IndexKey))) document.IndexComplete = false;
+        }
+        private static string IndexStamp(string path)
+        {var info=new FileInfo(path);return info.Exists?info.Length+"|"+info.LastWriteTimeUtc.Ticks:null;}
+        public bool ValidateIndex(DocumentRecord document)
+        {
+            if(!document.IndexComplete)return false;
+            if(!string.IsNullOrEmpty(document.IndexKey) && validatedIndexes.TryGetValue(document.IndexKey,out var stamp) && stamp==IndexStamp(IndexPath(document.IndexKey)))return true;
+            try
+            {
+                var pages=document.IndexedPages;
+                if(pages.Count==0 || pages.Count!=document.PageCount)throw new InvalidDataException("Index incomplet.");
+                return document.IndexComplete;
+            }
+            catch(Exception failure) when(failure is InvalidOperationException || failure is XmlException || failure is IOException)
+            {
+                document.IndexComplete=false;document.IndexError="Index à reconstruire : "+failure.GetBaseException().Message;
+                return false;
+            }
+            finally{document.ReleaseIndex();}
         }
         public string IndexPath(string key)
         {
@@ -178,8 +207,9 @@ namespace Doctracker.Core.Services
         }
         private static void NormalizeState(ProjectState state)
         {
-            if (state == null || state.SchemaVersion > 5) throw new InvalidDataException("Projet invalide ou version plus récente requise.");
-            var legacy = state.SchemaVersion < 2; state.SchemaVersion = 5;
+            if (state == null || state.SchemaVersion > 6) throw new InvalidDataException("Projet invalide ou version plus récente requise.");
+            var legacy = state.SchemaVersion < 2; state.SchemaVersion = 6;
+            state.Folders=state.Folders??new List<string>();
             state.CellLinks = state.CellLinks ?? new List<CellLinkRecord>();
             state.Documents = state.Documents ?? new List<DocumentRecord>(); state.Snips = state.Snips ?? new List<SnipRecord>();
             state.AuditTrail = state.AuditTrail ?? new List<AuditEventRecord>(); state.XrefReservations = state.XrefReservations ?? new List<XrefReservation>();

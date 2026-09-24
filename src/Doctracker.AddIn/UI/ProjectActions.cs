@@ -15,7 +15,7 @@ namespace Doctracker.AddIn.UI
     internal sealed partial class DoctrackerPaneControl
     {
         private bool bindingCategories;
-        public bool CommandPressed(string command) => command=="Comment" ? canvas.CommentMode : command=="PartialReferences" && view.PartialReferences.Checked;
+        public bool CommandPressed(string command) => command=="Comment" && canvas.CommentMode;
         public void ExecuteCommand(string command)
         {
             if(context.IsBusy)return;
@@ -24,7 +24,6 @@ namespace Doctracker.AddIn.UI
                 switch(command)
                 {
                     case "Comment": ToggleComment();break;
-                    case "PartialReferences": view.PartialReferences.Checked=!view.PartialReferences.Checked;break;
                     case "TestReference": ChangeTestReference();break;
                     case "ReindexOcr": ReindexOcrAsync();break;
                     case "DeleteSnip": DeleteSnip(focusedSnipId);break;
@@ -82,19 +81,20 @@ namespace Doctracker.AddIn.UI
         }
         private void RefreshCategories()
         {
-            var selected=view.Categories.SelectedItem as string;
-            bindingCategories=true;
+            var selected=(view.Categories.SelectedItem as FolderChoice)?.Path;bindingCategories=true;
             try
             {
-                var values=new[]{"Toutes les catégories"}.Concat(context.State.Documents.SelectMany(d=>d.Categories).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(c=>c)).ToList();
-                view.Categories.DataSource=values;view.Categories.SelectedItem=values.Contains(selected)?selected:values[0];
+                var values=new[]{new FolderChoice {Path=null,Caption="Tous les documents"},new FolderChoice {Path="",Caption="Non classés"}}
+                    .Concat(ProjectFolders.Paths(context.State).Select(p=>new FolderChoice {Path=p,Caption=p})).ToList();
+                view.Categories.DisplayMember="Caption";view.Categories.DataSource=values;
+                view.Categories.SelectedItem=values.FirstOrDefault(v=>v.Path==selected)??values[0];
             }
             finally{bindingCategories=false;}
         }
         private IEnumerable<DocumentRecord> VisibleDocuments()
         {
-            var category=view.Categories.SelectedItem as string;
-            return string.IsNullOrEmpty(category)||category=="Toutes les catégories"?context.State.Documents:context.State.Documents.Where(d=>d.Categories.Contains(category,StringComparer.OrdinalIgnoreCase));
+            var folder=(view.Categories.SelectedItem as FolderChoice)?.Path;
+            return folder==null ? context.State.Documents : context.State.Documents.Where(d=>folder==""?d.Categories.Count==0:d.Categories.Any(c=>ProjectFolders.Within(c,folder)));
         }
         private ProjectState SearchScope() => new ProjectState {Documents=VisibleDocuments().ToList()};
         private void ChangeCategory()
@@ -102,11 +102,13 @@ namespace Doctracker.AddIn.UI
             if(context.IsBusy)return;
             try
             {
-                EnsureProject();var doc=SelectedDocument;if(doc==null)return;
-                var value=Prompt(this,"Catégories", "Catégories séparées par ; (ex. Client 1 ; Factures)",string.Join(" ; ",doc.Categories));if(value==null)return;
-                var old=doc.Categories;doc.Categories=value.Split(';').Select(c=>c.Trim()).Where(c=>c.Length>0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-                try{context.Store.Save(context.State);}catch{doc.Categories=old;throw;}
-                RefreshCategories();BindDocuments();context.MarkWorkbookDirty();SetStatus("Catégories enregistrées.");
+                EnsureProject();using(var dialog=new FolderOrganizer(context.Store,context.State))
+                {
+                    dialog.ShowDialog(this);RefreshCategories();BindDocuments();
+                    if(dialog.SelectedDocumentId!=null)
+                    {bindingCategories=true;view.Categories.SelectedIndex=0;bindingCategories=false;BindDocuments();SelectDocument(dialog.SelectedDocumentId);}
+                }
+                context.MarkWorkbookDirty();SetStatus("Dossiers enregistrés. Utilisez la liste des dossiers pour limiter la recherche et l'export.");
             }
             catch(Exception exception){ShowError(exception);}
         }
@@ -118,7 +120,7 @@ namespace Doctracker.AddIn.UI
                 EnsureProject();using(var picker=new FolderBrowserDialog {Description="Importer un dossier et ses sous-dossiers",ShowNewFolderButton=false})
                 {
                     if(picker.ShowDialog(this)!=DialogResult.OK)return;
-                    var category=Prompt(this,"Importer un dossier","Catégorie principale (les sous-dossiers sont conservés)",Path.GetFileName(picker.SelectedPath));if(category==null)return;
+                    var category=Prompt(this,"Importer un dossier","Dossier principal (les sous-dossiers sont conservés)",Path.GetFileName(picker.SelectedPath));if(category==null)return;
                     BeginOperation();lastImportedId=null;var root=picker.SelectedPath;var errors=new List<string>();
                     var count=await Task.Run(()=>
                     {
@@ -127,7 +129,7 @@ namespace Doctracker.AddIn.UI
                         {
                             operation.Token.ThrowIfCancellationRequested();
                             var relative=Path.GetDirectoryName(file).Substring(root.TrimEnd(Path.DirectorySeparatorChar).Length).Trim(Path.DirectorySeparatorChar);
-                            try {var document=WordDocumentImporter.Import(context,file,string.IsNullOrWhiteSpace(relative)?category:category+" / "+relative.Replace(Path.DirectorySeparatorChar,'/'),false,operation.Token);DocumentImporter.AddCategory(document,category);lastImportedId=document.Id;imported++;}
+                            try {var document=WordDocumentImporter.Import(context,file,string.IsNullOrWhiteSpace(relative)?category:category+" / "+relative.Replace(Path.DirectorySeparatorChar.ToString()," / "),false,operation.Token);lastImportedId=document.Id;imported++;}
                             catch(OperationCanceledException){throw;}
                             catch(Exception exception){errors.Add(Path.GetFileName(file)+" : "+exception.Message);}
                             if(imported%25==0){context.Store.Save(context.State);SetStatusThreadSafe(imported+" pièces importées…");}
@@ -169,22 +171,52 @@ namespace Doctracker.AddIn.UI
             try
             {
                 EnsureProject();var doc=SelectedDocument;if(doc==null)return;
-                var reference=context.State.TestReference;
-                if(string.IsNullOrWhiteSpace(reference))
+                using(var dialog=new Form {Text="Créer / modifier la Xref",ClientSize=new Size(470,220),Padding=new Padding(12),Font=Font,StartPosition=FormStartPosition.CenterParent})
                 {
-                    if(!ChangeTestReference())return;
-                    reference=context.State.TestReference;
-                }
-                using(var dialog=new Form {Text=reference+" — Numéro disponible",Width=400,Height=150,StartPosition=FormStartPosition.CenterParent})
-                {
-                    var list=new ComboBox {Dock=DockStyle.Top,DropDownStyle=ComboBoxStyle.DropDownList,DataSource=CrossReferences.Available(context.State,reference).Take(500).ToList()};
-                    list.Format+=(s,e)=>e.Value=((int)e.ListItem).ToString("D2");list.FormattingEnabled=true;
-                    var ok=new Button {Text="Attribuer la Xref",Dock=DockStyle.Bottom,DialogResult=DialogResult.OK};dialog.Controls.Add(list);dialog.Controls.Add(ok);
+                    var reference=new TextBox {Text=string.IsNullOrWhiteSpace(doc.TestReference)?context.State.TestReference:doc.TestReference,Dock=DockStyle.Top,MaxLength=80};
+                    var list=new ComboBox {Dock=DockStyle.Top,DropDownStyle=ComboBoxStyle.DropDownList,FormattingEnabled=true};
+                    list.Format+=(s,e)=>e.Value=((int)e.ListItem).ToString("D2");
+                    Action refresh=()=>{
+                        var current=list.SelectedItem is int n?n:doc.ReferenceNumber;
+                        var available=CrossReferences.AvailableFor(context.State,reference.Text,doc.Id).Take(1000).ToList();
+                        if(current>0 && CrossReferences.AvailableFor(context.State,reference.Text,doc.Id).Contains(current) && !available.Contains(current))available.Add(current);
+                        list.DataSource=available.OrderBy(n=>n).ToList();if(available.Contains(current))list.SelectedItem=current;
+                    };
+                    reference.Leave+=(s,e)=>refresh();refresh();
+                    var common=new CheckBox {Text="Réutiliser ce préfixe pour les prochaines Xref",Checked=true,Dock=DockStyle.Top,AutoSize=true};
+                    var label=new Label {Text="Référence du test et numéro du document",Dock=DockStyle.Top,AutoSize=true};
+                    var hint=new Label {Text="Les anciens numéros restent réservés pour préserver la traçabilité.",Dock=DockStyle.Top,AutoSize=true};
+                    var ok=new Button {Text="Enregistrer",Dock=DockStyle.Bottom,DialogResult=DialogResult.OK};
+                    dialog.Controls.Add(hint);dialog.Controls.Add(common);dialog.Controls.Add(list);dialog.Controls.Add(reference);dialog.Controls.Add(label);dialog.Controls.Add(ok);dialog.AcceptButton=ok;
+                    dialog.FormClosing+=(s,e)=>{if(dialog.DialogResult==DialogResult.OK && (string.IsNullOrWhiteSpace(reference.Text)||!(list.SelectedItem is int))){e.Cancel=true;MessageBox.Show(dialog,"Renseignez la référence et choisissez un numéro.");}};
                     if(dialog.ShowDialog(this)!=DialogResult.OK)return;
-                    var oldRef=doc.TestReference;var oldNumber=doc.ReferenceNumber;
-                    CrossReferences.Assign(context.State,doc,reference,(int)list.SelectedItem);
-                    try{context.Store.Save(context.State);}catch{doc.TestReference=oldRef;doc.ReferenceNumber=oldNumber;context.State.XrefReservations.RemoveAt(context.State.XrefReservations.Count-1);throw;}
-                    documents.Refresh();BindDocuments();UpdateDocumentProofs();canvas.NavigateTo(context.Store.ResolveDocumentPath(doc),1);context.MarkWorkbookDirty();SetStatus("Xref : "+doc.DisplayName+". Le nom de l'export reprend cette référence.");
+                    var oldRef=doc.TestReference;var oldNumber=doc.ReferenceNumber;var oldCommon=context.State.TestReference;var reservationCount=context.State.XrefReservations.Count;
+                    var snapshots=new List<Excel.ExcelCellGateway.CellSnapshot>();var events=application.EnableEvents;
+                    try
+                    {
+                        CrossReferences.Reassign(context.State,doc,reference.Text,(int)list.SelectedItem);
+                        if(common.Checked)context.State.TestReference=reference.Text.Trim();
+                        application.EnableEvents=false;
+                        foreach(ExcelInterop.Worksheet sheet in workbook.Worksheets)
+                        {
+                            ExcelInterop.Range linked;try{linked=sheet.Cells.SpecialCells(ExcelInterop.XlCellType.xlCellTypeComments);}catch(System.Runtime.InteropServices.COMException){continue;}
+                            foreach(ExcelInterop.Range cell in linked.Cells)
+                            {
+                                var ids=cells.GetSnipIds(cell);var snip=context.State.Snips.LastOrDefault(p=>p.DocumentId==doc.Id && ids.Contains(p.Id));if(snip==null)continue;
+                                Excel.ExcelCellGateway.ValidateWritable(cell);snapshots.Add(cells.Snapshot(cell));cells.AttachProof(cell,snip,doc);
+                            }
+                        }
+                        context.Store.Save(context.State);
+                    }
+                    catch(Exception failure)
+                    {
+                        doc.TestReference=oldRef;doc.ReferenceNumber=oldNumber;context.State.TestReference=oldCommon;
+                        context.State.XrefReservations.RemoveRange(reservationCount,context.State.XrefReservations.Count-reservationCount);
+                        var errors=new List<string>();foreach(var snapshot in snapshots)try{snapshot.Restore();}catch(Exception rollback){errors.Add(rollback.Message);}
+                        if(errors.Count>0)throw new InvalidOperationException(failure.Message+" — Restauration Excel incomplète : "+string.Join(" ; ",errors),failure);throw;
+                    }
+                    finally{application.EnableEvents=events;}
+                    documents.Refresh();BindDocuments();UpdateDocumentProofs();canvas.NavigateTo(context.Store.ResolveDocumentPath(doc),1);context.MarkWorkbookDirty();SetStatus("Xref enregistrée : "+doc.DisplayName);
                 }
             }
             catch(Exception exception){ShowError(exception);}
@@ -244,7 +276,7 @@ namespace Doctracker.AddIn.UI
             try
             {
                 EnsureProject();var docs=VisibleDocuments().ToList();if(docs.Count==0)return;
-                using(var dialog=new FolderBrowserDialog {Description="Exporter les documents de la catégorie active en PDF annotés"})
+                using(var dialog=new FolderBrowserDialog {Description="Exporter les documents du dossier actif en PDF annotés"})
                 {
                     if(dialog.ShowDialog(this)!=DialogResult.OK)return;context.CaptureCellLinks();BeginOperation();var folder=dialog.SelectedPath;
                     var errors=await Task.Run(()=>

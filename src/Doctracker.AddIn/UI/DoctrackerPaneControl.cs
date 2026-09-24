@@ -312,6 +312,7 @@ namespace Doctracker.AddIn.UI
 
         public async void SearchFromPane()
         {
+            if(string.IsNullOrWhiteSpace(searchBox.Text)){SearchSelection();return;}
             await SearchDocumentsAsync(searchBox.Text);
         }
 
@@ -324,14 +325,15 @@ namespace Doctracker.AddIn.UI
                 if (string.IsNullOrWhiteSpace(query)) throw new InvalidOperationException("Saisissez un texte à rechercher.");
                 BeginOperation();
                 var errors = await IndexMissingAsync();
-                var scope=SearchScope();var partial=view.PartialReferences.Checked;
-                var results = await Task.Run(() => context.Matcher.Find(scope, query, 50, partial, operation.Token)
+                var scope=SearchScope();scope.Documents=scope.Documents.Where(d=>d.IndexComplete).ToList();
+                var results = await Task.Run(() => OccurrenceSearch.Find(scope, query, 201, operation.Token)
                     .Select(candidate => new SearchResultItem { Candidate = candidate,
                         Document = context.State.Documents.First(item => item.Id == candidate.DocumentId) }).ToList());
                 operation.Token.ThrowIfCancellationRequested();
+                var truncated=results.Count>200;if(truncated)results=results.Take(200).ToList();
                 searchResults.DataSource = results;
                 view.ShowResults(results.Count);
-                SetStatus((results.Count==0 ? "Aucun résultat. Vérifiez la catégorie ou utilisez Documents > Réindexer par OCR dans le ruban." : results.Count + " résultat(s).") + (errors.Count > 0 ? " Attention : " + errors.Count + " pièce(s) non indexée(s)." : ""));
+                SetStatus((results.Count==0 ? "Aucun résultat. Vérifiez le dossier ou utilisez Documents > Réindexer par OCR dans le ruban." : results.Count + " occurrence(s)."+(truncated?" Affichage limité à 200 : précisez la recherche.":"")) + (errors.Count > 0 ? " Attention : " + errors.Count + " pièce(s) non indexée(s)." : ""));
             }
             catch (OperationCanceledException) { SetStatus("Recherche annulée."); }
             catch (Exception exception) { ShowError(exception); }
@@ -402,7 +404,7 @@ namespace Doctracker.AddIn.UI
                 BeginOperation();
                 var errors = await IndexMissingAsync();
                 if (errors.Count > 0) throw new InvalidOperationException("Matching interrompu : certaines pièces ne sont pas indexées.\n" + string.Join("\n", errors));
-                var scope=SearchScope();var partial=view.PartialReferences.Checked;
+                var scope=SearchScope();scope.Documents=scope.Documents.Where(d=>d.IndexComplete).ToList();
                 var results = await Task.Run(() => context.Matcher.FindBatch(scope,queries.Select(q=>(IReadOnlyList<string>)q).ToList(),partial,operation.Token));
                 operation.Token.ThrowIfCancellationRequested();
                 EnsureActiveWorkbook();
@@ -584,7 +586,7 @@ namespace Doctracker.AddIn.UI
                     PageNumber = result.Candidate.PageNumber, X = result.Candidate.X, Y = result.Candidate.Y,
                     Width = result.Candidate.Width, Height = result.Candidate.Height });
                 SetStatus(result.Document.DisplayName + " — page " + result.Candidate.PageNumber +
-                          " — score " + result.Candidate.Score.ToString("P0"));
+                          " — " + (result.Candidate.HasLocation ? "occurrence localisée" : "texte trouvé ; position non disponible"));
             }
             catch (Exception exception)
             {
@@ -689,8 +691,10 @@ namespace Doctracker.AddIn.UI
         private void ShowError(Exception exception)
         {
             if (IsDisposed) return;
-            SetStatus("Erreur : " + exception.Message);
-            MessageBox.Show(this, exception.Message, "Doctracker",
+            var detail=exception.GetBaseException().Message;
+            var message=exception.Message+(detail==exception.Message?"":"\n"+detail);
+            SetStatus("Erreur : " + message);
+            MessageBox.Show(this, message, "Doctracker",
                 MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
 
@@ -857,7 +861,7 @@ namespace Doctracker.AddIn.UI
             public MatchCandidate Candidate { get; set; }
             public DocumentRecord Document { get; set; }
             public string Caption => Document.DisplayName + " — page " + Candidate.PageNumber +
-                                     " — score " + Candidate.Score.ToString("P0");
+                                     " — " + Candidate.Evidence;
         }
     }
 }

@@ -66,7 +66,10 @@ namespace Doctracker.AddIn.Infrastructure
                 }
             }
             cancellation.ThrowIfCancellationRequested();
-            var oldPages = document.IndexedPages;
+            List<PageTextRecord> oldPages;
+            try{oldPages=document.IndexedPages;}
+            catch(Exception failure) when(failure is InvalidOperationException || failure is System.Xml.XmlException || failure is IOException)
+            {oldPages=new List<PageTextRecord>();}
             var oldCount = document.PageCount;
             var oldComplete = document.IndexComplete;
             var oldError = document.IndexError;
@@ -90,9 +93,10 @@ namespace Doctracker.AddIn.Infrastructure
         public List<string> IndexMissing(ProjectState state, Action<string, int, int> progress, CancellationToken cancellation)
         {
             var errors = new List<string>();
-            foreach (var document in state.Documents.Where(item => !item.IndexComplete).ToList())
+            foreach (var document in state.Documents.ToList())
             {
                 cancellation.ThrowIfCancellationRequested();
+                if(store.ValidateIndex(document))continue;
                 try { Index(state, document, (page, count) => progress?.Invoke(document.OriginalName, page, count), cancellation); }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception exception)

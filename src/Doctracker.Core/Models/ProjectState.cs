@@ -9,9 +9,10 @@ namespace Doctracker.Core.Models
     public sealed class ProjectState
     {
         [XmlAttribute]
-        public int SchemaVersion { get; set; } = 5;
+        public int SchemaVersion { get; set; } = 6;
 
         public string ProjectId { get; set; } = Guid.NewGuid().ToString("N");
+        public List<string> Folders { get; set; } = new List<string>();
         public List<CellLinkRecord> CellLinks { get; set; } = new List<CellLinkRecord>();
         public string SharedVaultPath { get; set; } = string.Empty;
         public string Revision { get; set; } = Guid.NewGuid().ToString("N");

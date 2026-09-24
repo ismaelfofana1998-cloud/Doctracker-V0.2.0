@@ -19,6 +19,7 @@ namespace Doctracker.AddIn.UI
             view.DeleteSnipMenu.Click += (s,e) => DeleteSnip(focusedSnipId);
             canvas.DeleteProofRequested += DeleteSnip;
             canvas.EditCommentRequested += EditDocumentComment;
+            canvas.CommentGeometryChanged += ResizeDocumentComment;
             canvas.DeleteCommentRequested += DeleteDocumentComment;
             canvas.ProofSelected += id => {
                 if(context.IsBusy)return; focusedSnipId=id;
@@ -141,6 +142,20 @@ namespace Doctracker.AddIn.UI
                 UpdateDocumentProofs();context.MarkWorkbookDirty();SetStatus("Commentaire enregistré.");
             }
             catch(Exception exception){ShowError(exception);}
+        }
+        private void ResizeDocumentComment(string id,RectangleF zone)
+        {
+            if(context.IsBusy)return;
+            try
+            {
+                EnsureProject();var doc=SelectedDocument;var comment=doc?.Comments.FirstOrDefault(c=>c.Id==id);if(comment==null)return;
+                var fitted=canvas.FitComment(zone,comment.Text,comment.FontSize);
+                if(fitted.Height>zone.Height+.002)throw new InvalidOperationException("Le cadre est trop petit pour ce texte. Agrandissez-le ou réduisez la police par double-clic. Le cadre précédent est conservé.");
+                new DocumentCommentService(context.Store).Save(context.State,doc.Id,comment.PageNumber,
+                    new NormalizedRectangle(zone.X,zone.Y,zone.Width,zone.Height),comment.Text,id,comment.FontSize);
+                UpdateDocumentProofs();context.MarkWorkbookDirty();SetStatus("Commentaire déplacé / redimensionné. Double-clic pour modifier le texte et la police.");
+            }
+            catch(Exception exception){ShowError(exception);canvas.Invalidate();}
         }
         private void DeleteDocumentComment(string id)
         {

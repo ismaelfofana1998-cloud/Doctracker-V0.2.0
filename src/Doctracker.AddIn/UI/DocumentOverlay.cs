@@ -10,13 +10,13 @@ namespace Doctracker.AddIn.UI
         public static RectangleF Bounds(DocumentComment comment, Size size) => new RectangleF((float)comment.X * size.Width,
             (float)comment.Y * size.Height, (float)comment.Width * size.Width, (float)comment.Height * size.Height);
         public static float FontPixels(int width, double fontSize = 16) => (float)Math.Max(1, width * fontSize / 595d);
-        public static void Draw(Graphics graphics, Size size, DocumentRecord document, int page)
+        public static void Draw(Graphics graphics, Size size, DocumentRecord document, int page, DocumentComment preview = null)
         {
             if (document == null || size.Width < 1 || size.Height < 1) return;
             using (var red = new SolidBrush(Color.Red))
             using (var pen = new Pen(Color.Red, Math.Max(1f, size.Width * .0015f)))
             {
-                foreach (var comment in document.Comments.Where(c => c.PageNumber == page))
+                foreach (var comment in document.Comments.Where(c => c.PageNumber == page).Select(c=>preview!=null && c.Id==preview.Id?preview:c))
                 {
                     var box = Bounds(comment, size); if (box.Width < 2 || box.Height < 2) continue;
                     graphics.FillRectangle(Brushes.White, box); graphics.DrawRectangle(pen, box.X, box.Y, box.Width, box.Height);

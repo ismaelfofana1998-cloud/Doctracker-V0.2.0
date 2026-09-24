@@ -52,7 +52,7 @@ namespace Doctracker.AddIn.UI
         public bool CommandPressed(string command)
         {
             var window=application.ActiveWindow;WindowPane entry;
-            return window!=null && panes.TryGetValue(window.Hwnd,out entry) ? entry.Control.CommandPressed(command) : command=="PartialReferences";
+            return window!=null && panes.TryGetValue(window.Hwnd,out entry) ? entry.Control.CommandPressed(command) : false;
         }
         public void ImportDocuments() => Show(control => control.ImportDocuments());
         public void SetSnipMode(SnipType? type) => Show(control => control.SetSnipMode(type));

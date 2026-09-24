@@ -20,11 +20,11 @@ namespace Doctracker.AddIn.Ribbon
         <group id='ProjectGroup' label='Dossier'>
           <button id='OpenPane' getImage='GetImage' label='Ouvrir Doctracker' size='large' onAction='OpenPane_OnAction'/>
           <button id='ImportDocuments' getImage='GetImage' label='Importer' size='large' onAction='ImportDocuments_OnAction'/>
-          <button id='CrossReference' getImage='GetImage' label='Xref' size='large' onAction='Command_OnAction'/>
+          <button id='CrossReference' getImage='GetImage' label='Créer / modifier Xref' size='large' onAction='Command_OnAction'/>
           <button id='ExportPdf' getImage='GetImage' label='Exporter' size='large' onAction='Command_OnAction'/>
           <menu id='DocumentsMenu' label='Documents' getImage='GetImage'>
             <button id='ImportFolder' label='Importer un dossier…' onAction='Command_OnAction'/>
-            <button id='Categorize' label='Catégoriser…' onAction='Command_OnAction'/>
+            <button id='Categorize' label='Classer les documents…' onAction='Command_OnAction'/>
             <button id='TestReference' label='Référence du test…' onAction='Command_OnAction'/>
             <button id='Reindex' label='Réindexer tous les documents' onAction='Command_OnAction'/>
             <button id='ReindexOcr' label='Réindexer le document actif par OCR' onAction='Command_OnAction'/>
@@ -51,7 +51,6 @@ namespace Doctracker.AddIn.Ribbon
           <button id='DeleteSnip' getImage='GetImage' label='Supprimer un snip' onAction='Command_OnAction'/>
         </group>
         <group id='MatchingGroup'  label='Contrôle'>
-          <checkBox id='PartialReferences' label='Références contenues' onAction='Partial_OnAction' getPressed='Partial_GetPressed'/>
           <button id='SetMatchInput'  getImage='GetImage' label='Définir recherche' onAction='SetMatchInput_OnAction'/>
           <button id='SetMatchOutput' getImage='GetImage' label='Définir résultat' onAction='SetMatchOutput_OnAction'/>
           <button id='Match' getImage='GetImage' label='Lancer le matching' size='large' onAction='Match_OnAction'/>
@@ -102,8 +101,6 @@ namespace Doctracker.AddIn.Ribbon
         public void Command_OnAction(IRibbonControl control) { Controller.ExecuteCommand(control.Id); Refresh(); }
         public void Comment_OnAction(IRibbonControl control,bool pressed) { Controller.ExecuteCommand("Comment"); Refresh(); }
         public bool Comment_GetPressed(IRibbonControl control) => Globals.ThisAddIn?.Controller?.CommandPressed("Comment") ?? false;
-        public void Partial_OnAction(IRibbonControl control,bool pressed) { Controller.ExecuteCommand("PartialReferences"); Refresh(); }
-        public bool Partial_GetPressed(IRibbonControl control) => Globals.ThisAddIn?.Controller?.CommandPressed("PartialReferences") ?? true;
         public void Search_OnAction(IRibbonControl control) => Controller.SearchSelection();
 
         public void ValidationSnip_OnAction(IRibbonControl control, bool pressed) => SetSnipMode(SnipType.Validation, pressed);

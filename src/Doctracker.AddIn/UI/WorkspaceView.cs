@@ -27,16 +27,15 @@ namespace Doctracker.AddIn.UI
         public readonly ToolStripMenuItem Reindex = new ToolStripMenuItem("Réindexer les documents");
         public readonly ToolStripMenuItem Remove = new ToolStripMenuItem("Retirer le document sélectionné");
         public readonly ToolStripMenuItem ImportFolder = new ToolStripMenuItem("Importer un dossier et ses sous-dossiers…");
-        public readonly ToolStripMenuItem Categorize = new ToolStripMenuItem("Catégoriser le document…");
+        public readonly ToolStripMenuItem Categorize = new ToolStripMenuItem("Classer les documents…");
         public readonly ToolStripMenuItem CrossReference = new ToolStripMenuItem("Attribuer une Xref…");
         public readonly ToolStripMenuItem SharedStorage = new ToolStripMenuItem("Stockage autonome / partagé…");
         public readonly ToolStripMenuItem Backup = new ToolStripMenuItem("Sauvegarder toutes les pièces et liens…");
         public readonly ToolStripMenuItem Restore = new ToolStripMenuItem("Restaurer une sauvegarde…");
         public readonly ToolStripMenuItem RepairLinks = new ToolStripMenuItem("Réparer les liens des cellules…");
         public readonly ToolStripMenuItem RecoveryFolder = new ToolStripMenuItem("Ouvrir les sauvegardes automatiques");
-        public readonly ToolStripMenuItem ExportPdf = new ToolStripMenuItem("Exporter la catégorie en PDF annotés…");
-        public readonly ComboBox Categories = new EvidenceComboBox { DropDownStyle=ComboBoxStyle.DropDownList, Dock=DockStyle.Fill, FlatStyle=FlatStyle.Flat, AccessibleName="Catégorie de documents" };
-        public readonly CheckBox PartialReferences = new CheckBox { Text="Références partielles", Checked=true, AutoSize=true, ForeColor=SnipTheme.Muted };
+        public readonly ToolStripMenuItem ExportPdf = new ToolStripMenuItem("Exporter le dossier en PDF annotés…");
+        public readonly ComboBox Categories = new EvidenceComboBox { DropDownStyle=ComboBoxStyle.DropDownList, Dock=DockStyle.Fill, FlatStyle=FlatStyle.Flat, AccessibleName="Dossier de documents" };
         public readonly DocumentCanvas Canvas = new DocumentCanvas();
         private readonly TableLayoutPanel resultsPanel;
         private readonly TableLayoutPanel proofPanel;
@@ -66,8 +65,8 @@ namespace Doctracker.AddIn.UI
             Query.Anchor=AnchorStyles.Left|AnchorStyles.Right;Query.Margin=new Padding(0,0,2,0);
             Search.Text="";Search.AccessibleName="Rechercher";Search.Padding=new Padding(3,2,3,2);Search.Margin=Padding.Empty;
             searchRow.Controls.Add(Query,0,0);searchRow.Controls.Add(Search,1,0);header.Controls.Add(searchRow,1,0);Add(root,header);
-            tips.SetToolTip(Query,"Rechercher un texte, une référence, une date ou un montant dans la catégorie active (Entrée)");
-            tips.SetToolTip(Search,"Rechercher dans la catégorie active");
+            tips.SetToolTip(Query,"Rechercher un texte, une référence, une date ou un montant dans le dossier actif (Entrée)");
+            tips.SetToolTip(Search,"Rechercher dans le dossier actif");
             tips.SetToolTip(Documents,"Document actif · ouvrez la liste pour afficher les noms complets");
             Documents.DropDown += (s,e) => {
                 var longest=Documents.Items.Cast<object>().Select(item=>Documents.GetItemText(item)).Aggregate("",(a,b)=>b.Length>a.Length?b:a);
@@ -79,8 +78,8 @@ namespace Doctracker.AddIn.UI
             var filters=Row(65,35);filters.Padding=new Padding(8,2,8,4);
             filters.Controls.Add(Categories,0,0);filters.Controls.Add(IndexState,1,0);IndexState.Anchor=AnchorStyles.Left;IndexState.Dock=DockStyle.None;
             Add(root,filters);secondary.Add(filters);
-            Categories.Items.Add("Toutes les catégories");Categories.SelectedIndex=0;
-            tips.SetToolTip(Categories,"Catégorie active : elle limite la recherche et l'export");
+            Categories.Items.Add("Tous les documents");Categories.SelectedIndex=0;
+            tips.SetToolTip(Categories,"Dossier actif : il limite la recherche et l'export");
             DeleteSnip.AccessibleName="Supprimer le snip sélectionné";
             resultsPanel = Rows();resultsPanel.Padding=new Padding(12,0,12,8);resultsPanel.Visible=false;
             var resultsHeader=Row(100,0);resultsHeader.ColumnStyles[1]=new ColumnStyle(SizeType.AutoSize);
@@ -126,11 +125,11 @@ namespace Doctracker.AddIn.UI
             ModeState.Visible=!enabled && (activeMode.HasValue || commentMode);
             Reading.Text=enabled ? "Outils" : "Lecture";PerformLayout();
         }
-        public void ShowResults(int count) { SetReadingMode(false); resultTotal=count;resultCount.Text=count==0 ? "Aucun résultat · Vérifiez la catégorie ou réindexez le document." : count+" résultat(s)";SizeResults();resultsPanel.Visible=true; }
+        public void ShowResults(int count) { SetReadingMode(false); resultTotal=count;resultCount.Text=count==0 ? "Aucun résultat · Vérifiez le dossier ou réindexez le document." : count+" résultat(s)";SizeResults();resultsPanel.Visible=true; }
         private void SizeResults() { Results.Visible=resultTotal>0;resultsPanel.RowStyles[1].Height=resultTotal==0 ? 0 : Math.Min(3,resultTotal)*Results.ItemHeight+8; resultCount.MaximumSize=new Size(Math.Max(100,Width-120),0); }
         public void HideResults() { resultsPanel.Visible=false; }
         public void ShowProofs(bool visible) { proofPanel.Visible=visible; }
-        public void SetBusy(bool busy) { Documents.Enabled=Query.Enabled=Import.Enabled=Search.Enabled=Proofs.Enabled=Categories.Enabled=PartialReferences.Enabled=Comment.Enabled=DeleteSnip.Enabled=!busy;Cancel.Visible=busy; }
+        public void SetBusy(bool busy) { Documents.Enabled=Query.Enabled=Import.Enabled=Search.Enabled=Proofs.Enabled=Categories.Enabled=Comment.Enabled=DeleteSnip.Enabled=!busy;Cancel.Visible=busy; }
         private static Label Label(string text) => new Label {Text=text,AutoSize=true,Dock=DockStyle.Fill,ForeColor=SnipTheme.Muted,Margin=Padding.Empty,Padding=new Padding(0,3,0,3)};
         private static TableLayoutPanel Rows()
         {
@@ -143,7 +142,7 @@ namespace Doctracker.AddIn.UI
         }
         private static void Add(TableLayoutPanel table, Control control, SizeType sizing=SizeType.AutoSize,float height=0)
         { var row=table.RowCount++;table.RowStyles.Add(new RowStyle(sizing,height));table.Controls.Add(control,0,row); }
-        protected override void Dispose(bool disposing) { if(disposing){menu.Dispose();tips.Dispose();Import.Dispose();Comment.Dispose();Reading.Dispose();PartialReferences.Dispose();}base.Dispose(disposing); }
+        protected override void Dispose(bool disposing) { if(disposing){menu.Dispose();tips.Dispose();Import.Dispose();Comment.Dispose();Reading.Dispose();}base.Dispose(disposing); }
     }
     internal sealed class EvidenceComboBox : ComboBox
     {

@@ -128,6 +128,64 @@ try {
 
         } finally { $form.Dispose() }
     }
+    # Actual mouse events on the rendered canvas: move and resize preview, Escape rollback.
+    $form=[Windows.Forms.Form]::new();$form.ClientSize=[Drawing.Size]::new(800,600)
+    $editCanvas=[Activator]::CreateInstance($type,$true);$form.Controls.Add($editCanvas);$form.Show()
+    try {
+        $editCanvas.LoadDocument($imagePath)
+        $doc=New-Object Doctracker.Core.Models.DocumentRecord
+        $comment=New-Object Doctracker.Core.Models.DocumentComment
+        $comment.PageNumber=1;$comment.X=.1;$comment.Y=.2;$comment.Width=.3;$comment.Height=.2;$comment.Text='Texte test'
+        $doc.Comments.Add($comment);$editCanvas.SetDocument($doc);[Windows.Forms.Application]::DoEvents()
+        $editPicture=$type.GetField('picture',$flags).GetValue($editCanvas)
+        $script:changedZone=$null
+        $handler=[Action[string,Drawing.RectangleF]]{param($id,$zone) $script:changedZone=$zone}
+        $editCanvas.add_CommentGeometryChanged($handler)
+        $x=[int]($editPicture.Width*.2);$y=[int]($editPicture.Height*.3)
+        $down=[Windows.Forms.MouseEventArgs]::new([Windows.Forms.MouseButtons]::Left,1,$x,$y,0)
+        $move=[Windows.Forms.MouseEventArgs]::new([Windows.Forms.MouseButtons]::Left,1,$x+30,$y+20,0)
+        $type.GetMethod('Picture_MouseDown',$flags).Invoke($editCanvas,@($editPicture,$down)) | Out-Null
+        $type.GetMethod('Picture_MouseMove',$flags).Invoke($editCanvas,@($editPicture,$move)) | Out-Null
+        $type.GetMethod('Picture_MouseUp',$flags).Invoke($editCanvas,@($editPicture,$move)) | Out-Null
+        if($null -eq $script:changedZone -or $script:changedZone.X -le .1 -or [Math]::Abs($comment.X-.1) -gt .001) { throw 'Comment drag did not emit a move without mutating saved metadata.' }
+        $script:changedZone=$null
+        $x=[int]($editPicture.Width*.4);$y=[int]($editPicture.Height*.4)
+        $down=[Windows.Forms.MouseEventArgs]::new([Windows.Forms.MouseButtons]::Left,1,$x,$y,0)
+        $move=[Windows.Forms.MouseEventArgs]::new([Windows.Forms.MouseButtons]::Left,1,$x+40,$y+30,0)
+        $type.GetMethod('Picture_MouseDown',$flags).Invoke($editCanvas,@($editPicture,$down)) | Out-Null
+        $type.GetMethod('Picture_MouseMove',$flags).Invoke($editCanvas,@($editPicture,$move)) | Out-Null
+        $type.GetMethod('Picture_MouseUp',$flags).Invoke($editCanvas,@($editPicture,$move)) | Out-Null
+        if($null -eq $script:changedZone -or $script:changedZone.Width -le .3) { throw 'Comment resize handle failed.' }
+        $script:changedZone=$null
+        $type.GetMethod('Picture_MouseDown',$flags).Invoke($editCanvas,@($editPicture,$down)) | Out-Null
+        $type.GetMethod('Picture_MouseMove',$flags).Invoke($editCanvas,@($editPicture,$move)) | Out-Null
+        $type.GetMethod('CancelCommentDrag',$flags).Invoke($editCanvas,@()) | Out-Null
+        $type.GetMethod('Picture_MouseUp',$flags).Invoke($editCanvas,@($editPicture,$move)) | Out-Null
+        if($null -ne $script:changedZone) { throw 'Cancelled comment gesture was committed.' }
+        $shot=[Drawing.Bitmap]::new($editCanvas.Width,$editCanvas.Height);$editCanvas.DrawToBitmap($shot,[Drawing.Rectangle]::new(0,0,$shot.Width,$shot.Height))
+        $shot.Save((Join-Path $previewDirectory 'comment-handles.png'));$shot.Dispose()
+    } finally {$form.Dispose()}
+    Write-Host 'PASS: comment move, resize handles and cancellation via real mouse handlers'
+
+    $folderStore=New-Object Doctracker.Core.Services.ProjectStore (Join-Path $temp 'folders')
+    $folderState=New-Object Doctracker.Core.Models.ProjectState
+    $folderService=New-Object Doctracker.Core.Services.ProjectFolders $folderStore
+    $folderService.Create($folderState,'','Client 1');$folderService.Create($folderState,'Client 1','BL');$folderService.Create($folderState,'Client 1','Factures')
+    foreach($name in @('BL-001.pdf','Facture-001.pdf')) {$item=New-Object Doctracker.Core.Models.DocumentRecord;$item.OriginalName=$name;$folderState.Documents.Add($item)}
+    $folderType=$assembly.GetType('Doctracker.AddIn.UI.FolderOrganizer',$true)
+    $organizer=$folderType.GetConstructors($flags)[0].Invoke(@($folderStore.PSObject.BaseObject,$folderState.PSObject.BaseObject))
+    try {
+        $organizer.Show();[Windows.Forms.Application]::DoEvents()
+        $tree=$folderType.GetField('tree',$flags).GetValue($organizer)
+        $files=$folderType.GetField('files',$flags).GetValue($organizer)
+        if($files.Items.Count -ne 2 -or !$tree.AllowDrop) { throw 'Folder organizer did not show documents or allow drop.' }
+        $folderType.GetMethod('Move',$flags).Invoke($organizer,[object[]]@([string[]]@($folderState.Documents[0].Id),'Client 1 / BL')) | Out-Null
+        if($folderState.Documents[0].Categories[0] -ne 'Client 1 / BL' -or $files.Items.Count -ne 1) { throw 'Folder move failed to update membership and list.' }
+        $shot=[Drawing.Bitmap]::new($organizer.Width,$organizer.Height);$organizer.DrawToBitmap($shot,[Drawing.Rectangle]::new(0,0,$shot.Width,$shot.Height))
+        $shot.Save((Join-Path $previewDirectory 'folders.png'));$shot.Dispose()
+    } finally {$organizer.Dispose()}
+    Write-Host 'PASS: folder organizer, destination tree, document movement and refreshed list'
+
     Write-Host 'PASS: responsive workspace at 420/760 px, enlarged text, controls without vertical clipping, UI previews'
 
 
@@ -175,6 +233,15 @@ try {
     $matcher = New-Object Doctracker.Core.Services.DocumentMatcher
     $hit = $matcher.Find($state, 'FA-001', 1)[0]
     if (!$hit.IsExact -or !$hit.HasLocation -or $hit.Y -gt .4 -or $hit.Y -lt .1) { throw 'Native PDF word position incorrect.' }
+    [IO.File]::WriteAllBytes($store.IndexPath($document.IndexKey),[byte[]]@(1,2,3))
+    $freshStore=New-Object Doctracker.Core.Services.ProjectStore $store.ProjectDirectory
+    $freshState=$freshStore.LoadOrCreate('')
+    $freshIndexer=$constructor.Invoke([object[]]@($freshStore.PSObject.BaseObject,$ocr.PSObject.BaseObject))
+    $indexErrors=$freshIndexer.IndexMissing($freshState,$null,[Threading.CancellationToken]::None)
+    if($indexErrors.Count -ne 0 -or !$freshState.Documents[0].IndexComplete) { throw 'Damaged index did not rebuild from its source.' }
+    $occurrences=[Doctracker.Core.Services.OccurrenceSearch]::Find($freshState,'001',10,[Threading.CancellationToken]::None)
+    if($occurrences.Count -lt 1) { throw 'Search after automatic index recovery failed.' }
+    Write-Host 'PASS: damaged XML/GZip index rebuilt; occurrence search works after reopening'
     Write-Host 'PASS: PDFium deployment, landscape rendering, native PDF text and positional matching'
     # Windows PowerShell does not apply the add-in's .dll.config redirects.
     # Exercise export in a tiny host with the deployed configuration, in each architecture.

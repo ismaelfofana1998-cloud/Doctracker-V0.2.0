@@ -1,11 +1,11 @@
-# Doctracker 0.7.0 — complément Excel Windows
+# Doctracker 0.8.0 — complément Excel Windows
 
 Doctracker importe des PDF, images et fichiers Word (via Word installé), les classe par catégories et intègre les pièces
 au classeur Excel, ou les référence dans un emplacement réseau partagé. Il permet
 de sélectionner des zones, extraire leur contenu dans Excel, associer plusieurs
 preuves à une cellule et revenir à la source pour la revue.
 
-Voir [les améliorations 0.7 : espace, recherche et annotations](docs/ERGONOMIE_0.7.md), [les ajouts 0.6 : édition, Word et lecture](docs/EDITION_0.6.md) et [le guide 0.5 : partage, catégories, Xref et récupération](docs/PORTABILITE_0.5.md).
+Voir [les corrections 0.8 : recherche, dossiers et manipulation directe](docs/CORRECTIONS_0.8.md), [les améliorations 0.7 : espace, recherche et annotations](docs/ERGONOMIE_0.7.md), [les ajouts 0.6 : édition, Word et lecture](docs/EDITION_0.6.md) et [le guide 0.5 : partage, catégories, Xref et récupération](docs/PORTABILITE_0.5.md).
 
 ## Installer et utiliser
 
@@ -55,8 +55,8 @@ restaurer la destination et signale explicitement une restauration incomplète.
   puis **Définir recherche**. Chaque colonne non vide est un critère obligatoire.
 - Sélectionner une cellule de départ ou une plage de même dimension, puis
   **Définir résultat → Lancer le matching**.
-- Tous les critères d'une ligne doivent être trouvés sur une même page. Le mode
-  **Références contenues** retrouve les fragments alphanumériques malgré les espaces ;
+- Tous les critères d'une ligne doivent être trouvés sur une même page. Il
+  retrouve les fragments alphanumériques malgré les espaces ;
   montants et dates restent stricts. Les résultats partiels demandent confirmation.
   Plusieurs pages ou documents possibles restent ambigus : aucune preuve automatique.
 - Les sorties sont les valeurs trouvées dans les pièces, avec un lien individuel.
@@ -87,7 +87,7 @@ Un cache de travail et vingt versions des métadonnées restent sous
 une archive `.dtpack` complète : conservez-la ailleurs pour récupérer les pièces
 et liens si le classeur et son cache sont perdus. Les anciens dossiers adjacents
 sont migrés à l'ouverture ; conservez-les jusqu'à vérification de la migration.
-Utilisez ensuite la version 0.7, les versions antérieures ne comprenant pas le
+Utilisez ensuite la version 0.8, les versions antérieures ne comprenant pas le
 nouveau stockage. Aucun document n'est envoyé à un service OCR cloud.
 
 ## Portée réelle et validation

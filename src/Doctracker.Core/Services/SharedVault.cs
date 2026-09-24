@@ -73,6 +73,21 @@ namespace Doctracker.Core.Services
             state.XrefReservations.Add(new XrefReservation { Reference=reference, Number=number, DocumentId=document.Id });
             document.TestReference=reference; document.ReferenceNumber=number;
         }
+        public static System.Collections.Generic.IEnumerable<int> AvailableFor(ProjectState state,string reference,string documentId)
+        {
+            var owned=state.XrefReservations.Where(r=>r.DocumentId==documentId && string.Equals(r.Reference,reference.Trim(),StringComparison.OrdinalIgnoreCase)).Select(r=>r.Number);
+            return Available(state,reference).Concat(owned).Distinct().OrderBy(n=>n);
+        }
+        public static void Reassign(ProjectState state,DocumentRecord document,string reference,int number)
+        {
+            reference=(reference??"").Trim();
+            if(reference.Length==0 || reference.Length>80 || number<1 || number>99999)throw new ArgumentException("Référence de 1 à 80 caractères et numéro de 1 à 99999 requis.");
+            var reservations=state.XrefReservations.Where(r=>r.Number==number && string.Equals(r.Reference,reference,StringComparison.OrdinalIgnoreCase)).ToList();
+            if(reservations.Any(r=>r.DocumentId!=document.Id))throw new InvalidOperationException("Cette Xref appartient déjà à un autre document.");
+            if(!string.IsNullOrEmpty(state.SharedVaultPath))SharedVault.Reserve(state.SharedVaultPath,state.ProjectId,reference,number,document.Id);
+            if(reservations.Count==0)state.XrefReservations.Add(new XrefReservation {Reference=reference,Number=number,DocumentId=document.Id});
+            document.TestReference=reference;document.ReferenceNumber=number;
+        }
         public static string SafeFileName(string value)
         {
             var name = new string((value ?? "document").Select(c => c < 32 || "<>:\"/\\|?*".Contains(c) ? '_' : c).ToArray()).Trim().TrimEnd('.');

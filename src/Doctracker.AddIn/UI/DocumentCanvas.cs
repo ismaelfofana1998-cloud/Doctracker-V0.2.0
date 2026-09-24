@@ -8,6 +8,7 @@ using System.IO;
 using System.Windows.Forms;
 using Doctracker.AddIn.Infrastructure;
 using Doctracker.Core.Models;
+using Doctracker.Core.Geometry;
 using PdfiumViewer;
 
 namespace Doctracker.AddIn.UI
@@ -40,11 +41,17 @@ namespace Doctracker.AddIn.UI
         private readonly ContextMenuStrip popup = new ContextMenuStrip();
         private readonly ContextMenuStrip zoomMenu = new ContextMenuStrip();
         public bool CommentMode { get; set; }
+        private string selectedCommentId;
+        private DocumentComment commentPreview;
+        private RectangleF commentOriginal;
+        private bool commentDragging;
+        private int commentHandle;
+        public event Action<string,RectangleF> CommentGeometryChanged;
         public event Action<string> DeleteProofRequested;
         public event Action<string> ProofSelected;
         public event Action<string> EditCommentRequested;
         public event Action<string> DeleteCommentRequested;
-        public void SetDocument(DocumentRecord value) { document = value; picture.Invalidate(); }
+        public void SetDocument(DocumentRecord value) { if(document?.Id!=value?.Id)selectedCommentId=null;document = value; picture.Invalidate(); }
         private Point dragStart;
         private Point dragEnd;
         private bool dragging;
@@ -142,6 +149,14 @@ namespace Doctracker.AddIn.UI
             picture.MouseDown += Picture_MouseDown;
             picture.MouseMove += Picture_MouseMove;
             picture.MouseUp += Picture_MouseUp;
+            picture.MouseDoubleClick+=(s,e)=>{
+                if(e.Button!=MouseButtons.Left)return;
+                var comment=CommentAt(e.Location);if(comment==null)return;
+                commentDragging=false;commentPreview=null;picture.Capture=false;EditCommentRequested?.Invoke(comment.Id);picture.Invalidate();
+            };
+            picture.KeyDown+=(s,e)=>{if(e.KeyCode==Keys.Escape)CancelCommentDrag();};
+            viewport.KeyDown+=(s,e)=>{if(e.KeyCode==Keys.Escape)CancelCommentDrag();};
+            picture.MouseCaptureChanged+=(s,e)=>{if(!picture.Capture && commentDragging)CancelCommentDrag();};
             picture.Paint += Picture_Paint;
             picture.MouseEnter += (s,e) => viewport.Focus();
             MouseEventHandler wheel = (s,e) => {
@@ -271,6 +286,7 @@ namespace Doctracker.AddIn.UI
         {
             var pageCount = pdf == null ? (currentPath == null ? 0 : imagePageCount) : pdf.PageCount;
             if (requestedIndex < 0 || requestedIndex >= pageCount || (requestedIndex == pageIndex && currentImage != null)) return;
+            CancelCommentDrag();selectedCommentId=null;
             pageIndex = requestedIndex;
             selectedProofId = null;
             normalizedSelection = null;
@@ -409,6 +425,17 @@ namespace Doctracker.AddIn.UI
                 return;
             }
             if (e.Button != MouseButtons.Left) return;
+            var selected=document?.Comments.FirstOrDefault(c=>c.Id==selectedCommentId && c.PageNumber==CurrentPageNumber);
+            var handle=selected==null?-1:CommentHandleAt(selected,e.Location);
+            var hit=handle>0?selected:CommentAt(e.Location);
+            if(hit!=null)
+            {
+                selectedCommentId=hit.Id;commentOriginal=new RectangleF((float)hit.X,(float)hit.Y,(float)hit.Width,(float)hit.Height);
+                commentHandle=handle>0?handle:0;dragStart=e.Location;
+                commentPreview=new DocumentComment {Id=hit.Id,PageNumber=hit.PageNumber,X=hit.X,Y=hit.Y,Width=hit.Width,Height=hit.Height,Text=hit.Text,FontSize=hit.FontSize};
+                commentDragging=true;normalizedSelection=null;picture.Capture=true;picture.Invalidate();return;
+            }
+            selectedCommentId=null;
             picture.Capture = true;
             dragging = true;
             selectionType = ActiveType ?? SnipType.Text;
@@ -420,6 +447,18 @@ namespace Doctracker.AddIn.UI
 
         private void Picture_MouseMove(object sender, MouseEventArgs e)
         {
+            if(commentDragging && commentPreview!=null)
+            {
+                var box=CommentGeometry.Transform(new NormalizedRectangle(commentOriginal.X,commentOriginal.Y,commentOriginal.Width,commentOriginal.Height),
+                    (e.X-dragStart.X)/(double)picture.Width,(e.Y-dragStart.Y)/(double)picture.Height,commentHandle);
+                commentPreview.X=box.X;commentPreview.Y=box.Y;commentPreview.Width=box.Width;commentPreview.Height=box.Height;picture.Invalidate();return;
+            }
+            if(!dragging && !panning)
+            {
+                var selected=document?.Comments.FirstOrDefault(c=>c.Id==selectedCommentId && c.PageNumber==CurrentPageNumber);
+                var handle=selected==null?-1:CommentHandleAt(selected,e.Location);
+                picture.Cursor=handle==1||handle==5?Cursors.SizeNWSE:handle==3||handle==7?Cursors.SizeNESW:handle==2||handle==6?Cursors.SizeNS:handle==4||handle==8?Cursors.SizeWE:CommentAt(e.Location)!=null?Cursors.SizeAll:Cursors.Cross;
+            }
             if (panning)
             {
                 var screen = picture.PointToScreen(e.Location);
@@ -436,6 +475,13 @@ namespace Doctracker.AddIn.UI
 
         private void Picture_MouseUp(object sender, MouseEventArgs e)
         {
+            if(commentDragging && e.Button==MouseButtons.Left)
+            {
+                var preview=commentPreview;commentDragging=false;commentPreview=null;picture.Capture=false;
+                if(preview!=null && (Math.Abs(e.X-dragStart.X)>2 || Math.Abs(e.Y-dragStart.Y)>2))
+                    CommentGeometryChanged?.Invoke(preview.Id,new RectangleF((float)preview.X,(float)preview.Y,(float)preview.Width,(float)preview.Height));
+                picture.Invalidate();return;
+            }
             if (panning && e.Button == MouseButtons.Middle)
             {
                 panning = false;
@@ -470,7 +516,11 @@ namespace Doctracker.AddIn.UI
 
         private void Picture_Paint(object sender, PaintEventArgs e)
         {
-            DocumentOverlay.Draw(e.Graphics, picture.Size, document, CurrentPageNumber);
+            DocumentOverlay.Draw(e.Graphics, picture.Size, document, CurrentPageNumber,commentPreview);
+            var selectedComment=commentPreview??document?.Comments.FirstOrDefault(c=>c.Id==selectedCommentId && c.PageNumber==CurrentPageNumber);
+            if(selectedComment!=null)
+                foreach(var point in CommentHandles(selectedComment))
+                {var size=Math.Max(6,Font.Height/2);var box=new RectangleF(point.X-size/2f,point.Y-size/2f,size,size);e.Graphics.FillRectangle(Brushes.White,box);e.Graphics.DrawRectangle(Pens.Red,box.X,box.Y,box.Width,box.Height);}
             foreach (var proof in proofs.Where(item => item.PageNumber == CurrentPageNumber && item.Id != selectedProofId))
             {
                 var bounds = new Rectangle((int)(proof.X * picture.Width), (int)(proof.Y * picture.Height),
@@ -499,6 +549,19 @@ namespace Doctracker.AddIn.UI
             DrawHighlight(e.Graphics, rectangle, CommentMode ? Color.Red : SnipTheme.ColorFor(selectionType), true);
         }
 
+        private DocumentComment CommentAt(Point point)=>document?.Comments.LastOrDefault(c=>c.PageNumber==CurrentPageNumber && DocumentOverlay.Bounds(c,picture.Size).Contains(point));
+        private PointF[] CommentHandles(DocumentComment comment)
+        {
+            var r=DocumentOverlay.Bounds(comment,picture.Size);var cx=(r.Left+r.Right)/2;var cy=(r.Top+r.Bottom)/2;
+            return new[]{new PointF(r.Left,r.Top),new PointF(cx,r.Top),new PointF(r.Right,r.Top),new PointF(r.Right,cy),new PointF(r.Right,r.Bottom),new PointF(cx,r.Bottom),new PointF(r.Left,r.Bottom),new PointF(r.Left,cy)};
+        }
+        private int CommentHandleAt(DocumentComment comment,Point point)
+        {
+            var handles=CommentHandles(comment);var tolerance=Math.Max(7,Font.Height/2);
+            for(var i=0;i<handles.Length;i++)if(Math.Abs(handles[i].X-point.X)<=tolerance && Math.Abs(handles[i].Y-point.Y)<=tolerance)return i+1;
+            return -1;
+        }
+        private void CancelCommentDrag(){commentDragging=false;commentPreview=null;picture.Capture=false;picture.Invalidate();}
         private static void DrawHighlight(Graphics graphics, Rectangle bounds, Color color, bool selected)
         {
             if (bounds.Width <= 0 || bounds.Height <= 0) return;
@@ -562,6 +625,7 @@ namespace Doctracker.AddIn.UI
 
         private void DisposeDocument()
         {
+            CancelCommentDrag();selectedCommentId=null;
             dragging = false; panning = false; picture.Capture = false;
             picture.Image = null;
             picture.Size = Size.Empty;
