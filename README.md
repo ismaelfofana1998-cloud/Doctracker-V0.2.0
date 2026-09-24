@@ -1,6 +1,6 @@
 # Doctracker 0.7.0 — complément Excel Windows
 
-Doctracker importe des PDF et images, les classe par catégories et intègre les pièces
+Doctracker importe des PDF, images et fichiers Word (via Word installé), les classe par catégories et intègre les pièces
 au classeur Excel, ou les référence dans un emplacement réseau partagé. Il permet
 de sélectionner des zones, extraire leur contenu dans Excel, associer plusieurs
 preuves à une cellule et revenir à la source pour la revue.
@@ -16,7 +16,7 @@ Voir [les améliorations 0.7 : espace, recherche et annotations](docs/ERGONOMIE_
    uniquement le complément dans les applications Windows (conserver les missions).
    Lancer `Install-Doctracker.cmd` et vérifier le certificat affiché.
 4. Ouvrir Excel de bureau Windows, puis enregistrer un classeur local.
-5. Onglet **Doctracker → Ajouter des pièces**. Le premier document s'affiche ;
+5. Onglet **Doctracker → Importer**. Le dernier document importé s'affiche ;
    l'indexation utilise le texte natif des PDF ou l'OCR français/anglais pour les scans.
 6. Sélectionner une cellule, choisir **Texte**, **Nombre**, **Date**, **Somme**,
    **Tableau**, **Validation** ou **Exception**, puis dessiner une zone.
@@ -49,21 +49,21 @@ restaurer la destination et signale explicitement une restauration incomplète.
 
 ## Recherche et rapprochement
 
-- **Rechercher** utilise la cellule sélectionnée ; le champ du volet permet aussi une saisie libre.
+- **Rechercher la cellule** utilise la cellule sélectionnée ; le champ du volet permet aussi une saisie libre.
 - Les résultats partiels restent consultables dans la recherche interactive.
 - Pour un rapprochement, sélectionner **sans en-têtes** une plage de 1 à 10 colonnes,
   puis **Définir recherche**. Chaque colonne non vide est un critère obligatoire.
 - Sélectionner une cellule de départ ou une plage de même dimension, puis
   **Définir résultat → Lancer le matching**.
 - Tous les critères d'une ligne doivent être trouvés sur une même page. Le mode
-  **Références partielles** retrouve les fragments alphanumériques malgré les espaces ;
+  **Références contenues** retrouve les fragments alphanumériques malgré les espaces ;
   montants et dates restent stricts. Les résultats partiels demandent confirmation.
   Plusieurs pages ou documents possibles restent ambigus : aucune preuve automatique.
 - Les sorties sont les valeurs trouvées dans les pièces, avec un lien individuel.
   Les preuves restent au statut **Prepared**, à revoir.
 - Lors d'une relance, le remplacement des résultats existants et l'effacement des
   anciens résultats non confirmés demandent une confirmation globale.
-- La réindexation est accessible dans le volet. Une pièce incorrecte sans preuve
+- La réindexation est accessible dans le menu **Documents** du ruban. Une pièce incorrecte sans preuve
   peut être retirée de la liste. Un échec d'indexation bloque le matching et nomme la pièce.
 
 Les opérations longues peuvent être annulées. Il faut attendre leur fin ou les
@@ -83,7 +83,7 @@ le classeur transporte les liens et les preuves. Ce mode ne fusionne pas les
 modifications de copies indépendantes du classeur.
 
 Un cache de travail et vingt versions des métadonnées restent sous
-`%LOCALAPPDATA%\Doctracker\Recovery`. Le menu **Sauvegarder le dossier** exporte
+`%LOCALAPPDATA%\Doctracker\Recovery`. Le menu **Récupération → Sauvegarder les pièces et liens** exporte
 une archive `.dtpack` complète : conservez-la ailleurs pour récupérer les pièces
 et liens si le classeur et son cache sont perdus. Les anciens dossiers adjacents
 sont migrés à l'ouverture ; conservez-les jusqu'à vérification de la migration.
@@ -102,7 +102,7 @@ L'OCR et la reconstruction de tableaux demandent une revue humaine. Une valeur
 modifiée manuellement dans Excel ne modifie pas automatiquement la preuve source.
 Le lien conservé doit être revu avant de conclure le contrôle.
 
-- Moteur : tests automatisés sous .NET 8 et .NET Framework 4.8.
+- Moteur : tests automatisés sous .NET Framework 4.8 ; cible .NET 8 disponible pour les tests portables.
 - Windows : compilation VSTO et tests de rendu, OCR, positions PDF en x86/x64.
 - Installation : contrôle des manifestes, signature et bibliothèques livrées.
 - **Excel installé** : la recette COM/interaction utilisateur doit être effectuée
