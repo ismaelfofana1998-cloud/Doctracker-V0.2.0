@@ -136,7 +136,7 @@ namespace Doctracker.AddIn.UI
             if(context.IsBusy)return;
             try
             {
-                EnsureProject();using(var dialog=new SaveFileDialog {Filter="Sauvegarde Doctracker|*.dtpack;*.xml",FileName="Doctracker-"+DateTime.Today.ToString("yyyyMMdd")+".dtpack"})
+                EnsureProject();using(var dialog=new SaveFileDialog {Filter="Sauvegarde Doctracker|*.dtpack",DefaultExt="dtpack",AddExtension=true,FileName="Doctracker-"+DateTime.Today.ToString("yyyyMMdd")+".dtpack"})
                 {if(dialog.ShowDialog(this)!=DialogResult.OK)return;BeginOperation();await Task.Run(()=>RecoveryArchive.Export(context.Store,context.State,dialog.FileName,operation.Token));SetStatus("Sauvegarde complète créée : pièces, catégories, index et liens.");}
             }
             catch(OperationCanceledException){SetStatus("Sauvegarde annulée.");}catch(Exception ex){ShowError(ex);}finally{EndOperation();}

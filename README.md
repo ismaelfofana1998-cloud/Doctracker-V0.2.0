@@ -55,7 +55,9 @@ restaurer la destination et signale explicitement une restauration incomplète.
   puis **Définir recherche**. Chaque colonne non vide est un critère obligatoire.
 - Sélectionner une cellule de départ ou une plage de même dimension, puis
   **Définir résultat → Lancer le matching**.
-- Tous les critères d'une ligne doivent être trouvés exactement sur une même page.
+- Tous les critères d'une ligne doivent être trouvés sur une même page. Le mode
+  **Références partielles** retrouve les fragments alphanumériques malgré les espaces ;
+  montants et dates restent stricts. Les résultats partiels demandent confirmation.
   Plusieurs pages ou documents possibles restent ambigus : aucune preuve automatique.
 - Les sorties sont les valeurs trouvées dans les pièces, avec un lien individuel.
   Les preuves restent au statut **Prepared**, à revoir.
@@ -70,33 +72,29 @@ le fichier Excel à votre place : enregistrer le classeur après le travail.
 
 ## Conservation des missions
 
-Pour `Mission_Audit.xlsx`, le dossier adjacent est :
+Les pièces et leurs liens sont intégrés au classeur lors de son enregistrement
+(format `.xlsx`, `.xlsm` ou `.xlsb`). Il suffit de transmettre ce classeur à un
+utilisateur équipé du complément. Aucun dossier adjacent n'est nécessaire.
+La limite de sécurité est de 256 Mo de pièces et d'index intégrés par classeur.
 
-```text
-.Mission_Audit.doctracker/
-├── project.xml
-├── project.xml.bak
-└── documents/
-```
+Pour les volumes importants, un stockage réseau UNC partagé conserve les sources
+une seule fois. Tous les utilisateurs doivent avoir accès au même emplacement ;
+le classeur transporte les liens et les preuves. Ce mode ne fusionne pas les
+modifications de copies indépendantes du classeur.
 
-Les documents, coordonnées, statuts et événements restent sur l'ordinateur.
-Aucun document n'est transmis à un service OCR ou à une base cloud.
-**Conserver le classeur et son dossier ensemble.** Les preuves ne sont pas
-embarquées dans le fichier `.xlsx`. Un « Enregistrer sous » effectué pendant que
-le complément suit ce classeur copie son dossier, sans supprimer l'original.
-Un dossier de destination existant n'est pas écrasé.
-
-Les projets 0.2 sont lisibles et migrent vers le schéma 2 à l'ouverture.
-La sauvegarde précédente reste dans `project.xml.bak`. Après migration,
-utiliser 0.3 pour éviter de perdre les positions de mots ou les nouveaux types
-de preuves en rouvrant avec 0.2. Cliquer **Réindexer les pièces** pour bénéficier
-des positions dans les anciens projets.
+Un cache de travail et vingt versions des métadonnées restent sous
+`%LOCALAPPDATA%\Doctracker\Recovery`. Le menu **Sauvegarder le dossier** exporte
+une archive `.dtpack` complète : conservez-la ailleurs pour récupérer les pièces
+et liens si le classeur et son cache sont perdus. Les anciens dossiers adjacents
+sont migrés à l'ouverture ; conservez-les jusqu'à vérification de la migration.
+Utilisez ensuite la version 0.5, les versions antérieures ne comprenant pas le
+nouveau stockage. Aucun document n'est envoyé à un service OCR cloud.
 
 ## Portée réelle et validation
 
 Cette version corrige les parcours documentaires principaux. **Elle n'est pas
-une reproduction intégrale de DataSnipper.** Restent notamment absents : pièces
-embarquées dans le classeur, Form Extraction par modèle, matching entre plusieurs
+une reproduction intégrale de DataSnipper.** Restent notamment absents : coédition des preuves entre copies du classeur,
+connecteur documentaire cloud, Form Extraction par modèle, matching entre plusieurs
 groupes de documents et pages, tolérances paramétrables, comparaison de versions,
 reconnaissance avancée des tableaux et administration d'entreprise.
 

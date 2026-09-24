@@ -605,14 +605,15 @@ namespace Doctracker.AddIn.UI
 
         private void BindDocuments()
         {
+            var visible=VisibleDocuments().ToList();
             var selectedId = SelectedDocument?.Id;
-            if(selectedId!=null && !VisibleDocuments().Any(d=>d.Id==selectedId))selectedId=null;
-            var listChanged = documents.Items.Count != VisibleDocuments().Count() ||
-                documents.Items.Cast<DocumentRecord>().Where((doc, index) => !ReferenceEquals(doc, VisibleDocuments().ElementAt(index))).Any();
+            if(selectedId!=null && !visible.Any(d=>d.Id==selectedId))selectedId=null;
+            var listChanged = documents.Items.Count != visible.Count ||
+                documents.Items.Cast<DocumentRecord>().Where((doc, index) => !ReferenceEquals(doc, visible[index])).Any();
             if (listChanged)
             {
                 documents.SelectedIndexChanged -= Documents_SelectedIndexChanged;
-                documents.DataSource = VisibleDocuments().ToList();
+                documents.DataSource = visible;
                 documents.DisplayMember = "DisplayName";
                 if (selectedId != null) SelectDocument(selectedId);
                 if (documents.SelectedIndex < 0 && documents.Items.Count > 0) documents.SelectedIndex = 0;

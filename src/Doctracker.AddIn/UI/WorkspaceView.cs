@@ -59,7 +59,10 @@ namespace Doctracker.AddIn.UI
             var picker = Rows(); picker.Dock=DockStyle.Fill;
             var caption = Label("DOCUMENTS"); caption.Font=new Font("Segoe UI",8F,FontStyle.Bold);
             Add(picker,caption); Add(picker,Documents); header.Controls.Add(picker,1,0); Add(root,header);
-            Documents.DropDown += (s,e) => { Documents.DropDownWidth = Math.Max(Documents.Width, Math.Min(900, Documents.Items.Cast<object>().Select(item=>TextRenderer.MeasureText(Convert.ToString(item.GetType().GetProperty("DisplayName")?.GetValue(item,null) ?? item),Documents.Font).Width+40).DefaultIfEmpty(300).Max())); };
+            Documents.DropDown += (s,e) => {
+                var longest=Documents.Items.Cast<object>().Select(item=>Documents.GetItemText(item)).Aggregate("",(a,b)=>b.Length>a.Length?b:a);
+                Documents.DropDownWidth=Math.Max(Documents.Width,Math.Min(900,TextRenderer.MeasureText(longest,Documents.Font).Width+40));
+            };
             var actions = new FlowLayoutPanel { AutoSize=true, Dock=DockStyle.Fill, Padding=new Padding(8,0,8,4), Margin=Padding.Empty };
             var more = SnipTheme.Button("", "More"); more.AccessibleName="Options des documents";
             menu.Items.Add(ImportFolder);menu.Items.Add(Categorize);menu.Items.Add(CrossReference);

@@ -78,7 +78,12 @@ namespace Doctracker.AddIn.Infrastructure
             }
             Func<CellLinkRecord,string> key=x=>x.WorksheetName+"!"+x.CellAddress+"|"+string.Join(",",x.SnipIds);
             if(!links.Select(key).OrderBy(x=>x).SequenceEqual(State.CellLinks.Select(key).OrderBy(x=>x)))
-            {State.CellLinks=links;Store.Save(State);}
+            {
+                State.CellLinks=links;
+                var byId=State.Snips.ToDictionary(s=>s.Id);var seen=new HashSet<string>();
+                foreach(var link in links)foreach(var id in link.SnipIds)if(seen.Add(id)){byId[id].WorksheetName=link.WorksheetName;byId[id].CellAddress=link.CellAddress;}
+                Store.Save(State);
+            }
         }
         public void RestoreMetadata(string file)
         {
