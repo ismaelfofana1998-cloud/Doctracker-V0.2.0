@@ -131,11 +131,11 @@ namespace Doctracker.Core.Services
                 {
                     foreach(var line in Regex.Split(textValue,@"\r?\n"))
                     {
-                        var tokens=Regex.Split(line.Trim(),@"\s+");
-                        for(var length=1;length<=Math.Min(8,tokens.Length);length++)
-                        for(var i=0;i+length<=tokens.Length;i++)
+                        var lineTokens=Regex.Split(line.Trim(),@"\s+");
+                        for(var length=1;length<=Math.Min(8,lineTokens.Length);length++)
+                        for(var i=0;i+length<=lineTokens.Length;i++)
                         {
-                            var evidence=string.Join(" ",tokens.Skip(i).Take(length));
+                            var evidence=string.Join(" ",lineTokens.Skip(i).Take(length));
                             if(!Compact(evidence).Contains(compactQuery))continue;
                             candidate.Evidence=evidence;candidate.IsExact=exact(evidence);candidate.IsPartial=!candidate.IsExact;candidate.Score=candidate.IsExact?1:.9;return candidate;
                         }

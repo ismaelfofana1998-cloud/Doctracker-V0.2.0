@@ -32,11 +32,18 @@ namespace Doctracker.Core.Services
                 finally { if (File.Exists(temp)) File.Delete(temp); }
             }
         }
+        private static string ReservationFolder(string root,string projectId,string reference)
+        {
+            using(var hash=SHA256.Create())return Path.Combine(root,"xref",BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(projectId+"|"+reference.Trim().ToUpperInvariant()))).Replace("-",""));
+        }
+        public static System.Collections.Generic.IEnumerable<int> ReservedNumbers(string root,string projectId,string reference)
+        {
+            var folder=ReservationFolder(root,projectId,reference);
+            return !Directory.Exists(folder)?new int[0]:Directory.GetFiles(folder,"*.txt").Select(path=>int.TryParse(Path.GetFileNameWithoutExtension(path),out var number)?number:0).Where(number=>number>0).ToArray();
+        }
         public static void Reserve(string root, string projectId, string reference, int number, string documentId)
         {
-            string key;
-            using (var hash = SHA256.Create()) key = BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(projectId + "|" + reference.Trim().ToUpperInvariant()))).Replace("-", "");
-            var folder = Path.Combine(root, "xref", key); Directory.CreateDirectory(folder);
+            var folder=ReservationFolder(root,projectId,reference); Directory.CreateDirectory(folder);
             var path = Path.Combine(folder, number.ToString("D6") + ".txt");
             try { using (var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { var data = Encoding.UTF8.GetBytes(documentId); file.Write(data,0,data.Length); file.Flush(true); } }
             catch (IOException) { if (!File.Exists(path) || File.ReadAllText(path) != documentId) throw new IOException("Ce numéro Xref est déjà réservé. Choisissez le suivant."); }
@@ -44,7 +51,13 @@ namespace Doctracker.Core.Services
     }
     public static class CrossReferences
     {
-        public static int Next(ProjectState state, string reference) => Enumerable.Range(1,99999).First(n => !IsUsed(state, reference, n));
+        public static int Next(ProjectState state, string reference) => Available(state,reference).First();
+        public static System.Collections.Generic.IEnumerable<int> Available(ProjectState state,string reference)
+        {
+            var used=new System.Collections.Generic.HashSet<int>(state.XrefReservations.Where(r=>string.Equals(r.Reference,reference.Trim(),StringComparison.OrdinalIgnoreCase)).Select(r=>r.Number));
+            if(!string.IsNullOrEmpty(state.SharedVaultPath))used.UnionWith(SharedVault.ReservedNumbers(state.SharedVaultPath,state.ProjectId,reference));
+            return Enumerable.Range(1,99999).Where(n=>!used.Contains(n));
+        }
         public static bool IsUsed(ProjectState state, string reference, int number) => state.XrefReservations.Any(r => r.Number == number && string.Equals(r.Reference,reference.Trim(),StringComparison.OrdinalIgnoreCase));
         public static void Assign(ProjectState state, DocumentRecord document, string reference, int number)
         {

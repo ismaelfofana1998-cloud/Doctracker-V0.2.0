@@ -1,8 +1,11 @@
-# Doctracker 0.4.0 — complément Excel Windows
+# Doctracker 0.5.0 — complément Excel Windows
 
-Doctracker importe des PDF et images dans un dossier de mission local. Il permet
+Doctracker importe des PDF et images, les classe par catégories et intègre les pièces
+au classeur Excel, ou les référence dans un emplacement réseau partagé. Il permet
 de sélectionner des zones, extraire leur contenu dans Excel, associer plusieurs
 preuves à une cellule et revenir à la source pour la revue.
+
+Voir [le guide 0.5 : partage, catégories, Xref et récupération](docs/PORTABILITE_0.5.md).
 
 ## Installer et utiliser
 

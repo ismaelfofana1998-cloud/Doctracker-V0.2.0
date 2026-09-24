@@ -11,7 +11,7 @@ namespace Doctracker.AddIn.Infrastructure
     {
         private readonly ExcelInterop.Workbook workbook;
         private readonly Control dispatcher = new Control();
-        public ExcelWorkbookParts(ExcelInterop.Workbook workbook) { this.workbook=workbook;dispatcher.CreateControl(); }
+        public ExcelWorkbookParts(ExcelInterop.Workbook workbook) { this.workbook=workbook;var handle=dispatcher.Handle; }
         private T OnExcel<T>(Func<T> action) => dispatcher.InvokeRequired ? (T)dispatcher.Invoke(action) : action();
         public IEnumerable<string> Ids(string ns) => OnExcel(() => {
             var result=new List<string>();var selected=workbook.CustomXMLParts.SelectByNamespace(ns);

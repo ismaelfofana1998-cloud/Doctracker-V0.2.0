@@ -119,7 +119,7 @@ namespace Doctracker.AddIn.UI
                 var reference=Prompt(this,"Xref du document","Référence du test (ex. DAC B 30 040)",doc.TestReference);if(string.IsNullOrWhiteSpace(reference))return;
                 using(var dialog=new Form {Text="Numéro Xref disponible",Width=400,Height=150,StartPosition=FormStartPosition.CenterParent})
                 {
-                    var list=new ComboBox {Dock=DockStyle.Top,DropDownStyle=ComboBoxStyle.DropDownList,DataSource=Enumerable.Range(1,99999).Where(n=>!CrossReferences.IsUsed(context.State,reference,n)).Take(500).ToList()};
+                    var list=new ComboBox {Dock=DockStyle.Top,DropDownStyle=ComboBoxStyle.DropDownList,DataSource=CrossReferences.Available(context.State,reference).Take(500).ToList()};
                     list.Format+=(s,e)=>e.Value=((int)e.ListItem).ToString("D2");list.FormattingEnabled=true;
                     var ok=new Button {Text="Attribuer la Xref",Dock=DockStyle.Bottom,DialogResult=DialogResult.OK};dialog.Controls.Add(list);dialog.Controls.Add(ok);
                     if(dialog.ShowDialog(this)!=DialogResult.OK)return;
@@ -163,7 +163,9 @@ namespace Doctracker.AddIn.UI
             {
                 EnsureProject();if(MessageBox.Show(this,"Réattacher les preuves aux cellules enregistrées dans les métadonnées, sans modifier leurs valeurs ? Les feuilles manquantes seront signalées.","Récupération des liens",MessageBoxButtons.YesNo)!=DialogResult.Yes)return;
                 application.EnableEvents=false;var repaired=0;var missing=new List<string>();
-                var links=context.State.CellLinks.Count>0?context.State.CellLinks:context.State.Snips.GroupBy(s=>new{s.WorksheetName,s.CellAddress}).Select(g=>new CellLinkRecord {WorksheetName=g.Key.WorksheetName,CellAddress=g.Key.CellAddress,SnipIds=g.Select(s=>s.Id).ToList()}).ToList();
+                var links=context.State.CellLinks.ToList();
+                var recorded=new HashSet<string>(links.SelectMany(link=>link.SnipIds));
+                links.AddRange(context.State.Snips.Where(s=>!recorded.Contains(s.Id)).GroupBy(s=>new{s.WorksheetName,s.CellAddress}).Select(g=>new CellLinkRecord {WorksheetName=g.Key.WorksheetName,CellAddress=g.Key.CellAddress,SnipIds=g.Select(s=>s.Id).ToList()}));
                 foreach(var group in links)
                 {
                     ExcelInterop.Worksheet sheet=null;foreach(ExcelInterop.Worksheet item in workbook.Worksheets)if(item.Name==group.WorksheetName){sheet=item;break;}

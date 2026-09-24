@@ -136,7 +136,7 @@ namespace Doctracker.AddIn.UI
         public void RefreshProject()
         {
             if (context.IsBusy || IsDisposed) return;
-            try { EnsureProject(); RefreshCategories(); BindDocuments(); }
+            try { EnsureProject(); RefreshCategories(); BindDocuments(); if(context.Store.RecoveryNotice!=null)SetStatus(context.Store.RecoveryNotice); }
             catch (Exception exception) { SetStatus(exception.Message); }
         }
 

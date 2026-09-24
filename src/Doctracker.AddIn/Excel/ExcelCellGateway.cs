@@ -75,7 +75,7 @@ namespace Doctracker.AddIn.Excel
             var ids = append ? GetSnipIds(target).Where(id => id != snip.Id).ToList() : new List<string>();
             ids.Add(snip.Id);
             var text = userNote + "\n[DOCTRACKER]\n" + string.Join("\n", ids.Select(id => MarkerPrefix + id)) +
-                "\nDocument : " + document.OriginalName + "\nPage : " + snip.PageNumber + "\nType : " + snip.Type +
+                "\nDocument : " + document.DisplayName + "\nPage : " + snip.PageNumber + "\nType : " + snip.Type +
                 "\nStatut : " + snip.Status + "\nCommentaire : " + snip.Comment + "\nSélectionner la cellule pour afficher la preuve.";
             if (target.Comment == null) target.AddComment(text); else target.Comment.Text(text);
             target.Comment.Visible = false;
