@@ -22,6 +22,7 @@ namespace Doctracker.AddIn.UI
         private readonly ListView files=new ListView {Dock=DockStyle.Fill,View=View.Details,FullRowSelect=true,MultiSelect=true,HideSelection=false,BorderStyle=BorderStyle.None};
         private readonly Label info=new Label {Dock=DockStyle.Bottom,AutoSize=true,Padding=new Padding(10),Text="Sélectionnez les documents (Ctrl / Maj), puis glissez-les sur un dossier à gauche."};
         public string SelectedDocumentId {get;private set;}
+        public string SelectedFolderPath=>SelectedPath;
         public FolderOrganizer(ProjectStore store,ProjectState state)
         {
             this.state=state;folders=new ProjectFolders(store);

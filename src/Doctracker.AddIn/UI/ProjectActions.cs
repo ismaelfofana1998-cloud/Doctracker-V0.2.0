@@ -104,9 +104,11 @@ namespace Doctracker.AddIn.UI
             {
                 EnsureProject();using(var dialog=new FolderOrganizer(context.Store,context.State))
                 {
-                    dialog.ShowDialog(this);RefreshCategories();BindDocuments();
-                    if(dialog.SelectedDocumentId!=null)
-                    {bindingCategories=true;view.Categories.SelectedIndex=0;bindingCategories=false;BindDocuments();SelectDocument(dialog.SelectedDocumentId);}
+                    dialog.ShowDialog(this);RefreshCategories();
+                    bindingCategories=true;
+                    try{view.Categories.SelectedItem=view.Categories.Items.Cast<FolderChoice>().FirstOrDefault(choice=>choice.Path==dialog.SelectedFolderPath)??view.Categories.Items[0];}
+                    finally{bindingCategories=false;}
+                    BindDocuments();if(dialog.SelectedDocumentId!=null)SelectDocument(dialog.SelectedDocumentId);
                 }
                 context.MarkWorkbookDirty();SetStatus("Dossiers enregistrés. Utilisez la liste des dossiers pour limiter la recherche et l'export.");
             }
