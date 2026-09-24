@@ -251,7 +251,7 @@ try {
     $constructor = $indexerType.GetConstructors($flags)[0]
     $indexer = $constructor.Invoke([object[]]@($store.PSObject.BaseObject, $ocr.PSObject.BaseObject))
     $readPage=$indexerType.GetMethod('ReadNativePage',($flags -bor [Reflection.BindingFlags]::Static),$null,[Type[]]@([string],[int]),$null)
-    $nativePage=$readPage.Invoke($null,[object[]]@($pdfPath,1))
+    $nativePage=$readPage.Invoke($null,[object[]]@($pdfPath.PSObject.BaseObject,1))
     if($document.IndexComplete -or $document.IndexKey -ne '' -or $nativePage.Text -notmatch 'FA-001' -or $nativePage.Words.Count -eq 0){throw 'First snip cannot use native PDF text before indexing.'}
 
     $indexer.Index($state, $document, $null, [Threading.CancellationToken]::None, $false)
