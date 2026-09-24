@@ -14,18 +14,21 @@ namespace Doctracker.Core.Services
             if (document.Sha256 == null || document.Sha256.Length != 64 || document.Sha256.Any(c => !Uri.IsHexDigit(c))) throw new InvalidDataException("Empreinte de pièce incorrecte.");
             return Path.Combine(root, "objects", document.Sha256.ToUpperInvariant() + ".bin");
         }
-        public static void Publish(string root, ProjectStore store, ProjectState state)
+        public static void Publish(string root, ProjectStore store, ProjectState state, System.Threading.CancellationToken cancellation = default)
         {
             Directory.CreateDirectory(Path.Combine(root, "objects"));
             foreach (var document in state.Documents)
             {
+                cancellation.ThrowIfCancellationRequested();
                 var destination = DocumentPath(root, document);
                 if (File.Exists(destination)) { if(document.ByteLength>0 && new FileInfo(destination).Length!=document.ByteLength)throw new InvalidDataException("Pièce partagée altérée : "+document.OriginalName); continue; }
                 var source = store.ResolveDocumentPath(document); ProjectStore.VerifyHash(document, source);
                 var temp = destination + "." + Guid.NewGuid().ToString("N") + ".tmp";
                 try
                 {
-                    File.Copy(source, temp);
+                    using(var input=File.OpenRead(source))using(var output=File.Create(temp))
+                    {var buffer=new byte[81920];int count;while((count=input.Read(buffer,0,buffer.Length))>0){cancellation.ThrowIfCancellationRequested();output.Write(buffer,0,count);}}
+                    cancellation.ThrowIfCancellationRequested();
                     try { File.Move(temp, destination); }
                     catch (IOException) { if (!File.Exists(destination)) throw; ProjectStore.VerifyHash(document, destination); }
                 }

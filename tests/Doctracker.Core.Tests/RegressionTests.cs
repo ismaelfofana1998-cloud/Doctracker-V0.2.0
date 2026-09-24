@@ -150,7 +150,8 @@ namespace Doctracker.Core.Tests
             InDirectory(directory =>
             {
                 var store = new ProjectStore(directory);
-                Directory.CreateDirectory(store.MetadataPath + ".tmp");
+                // Make the metadata destination unwritable regardless of temporary-file naming.
+                Directory.CreateDirectory(store.MetadataPath);
                 var state = Project("100");
                 var service = new SnipService(store, new TextValueParser());
                 var snip = service.Prepare(state, state.Documents[0].Id, 1, new NormalizedRectangle(0, 0, 1, 1), SnipType.Text, "test", "A", "A1", "tester");
@@ -166,7 +167,8 @@ namespace Doctracker.Core.Tests
             InDirectory(directory =>
             {
                 var store = new ProjectStore(Path.Combine(directory, "project"));
-                Directory.CreateDirectory(store.MetadataPath + ".tmp");
+                // Make the metadata destination unwritable regardless of temporary-file naming.
+                Directory.CreateDirectory(store.MetadataPath);
                 var source = Path.Combine(directory, "source.pdf");
                 File.WriteAllText(source, "fixture");
                 var state = new ProjectState();

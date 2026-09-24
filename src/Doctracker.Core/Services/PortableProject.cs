@@ -67,22 +67,24 @@ namespace Doctracker.Core.Services
         {
             var observed=new PortableProject(parts);
             if(observed.currentId!=currentId) throw new IOException("Les preuves du classeur ont changé dans une autre session. Rechargez le classeur avant d'enregistrer pour éviter un écrasement.");
+            var previous=(current?.Files??new List<PortableFile>()).ToDictionary(f=>f.Path,StringComparer.Ordinal);
+            Func<string,string,PortableFile> unchanged=(path,hash)=>previous.TryGetValue(path,out var file) && file.Hash==hash ? file : null;
             var inputs=new List<Tuple<string,string,string>>();
             if(string.IsNullOrEmpty(state.SharedVaultPath))
-                foreach(var doc in state.Documents) inputs.Add(Tuple.Create(doc.RelativePath.Replace('\\','/'),current?.Files.Any(f=>f.Path==doc.RelativePath.Replace('\\','/') && f.Hash==doc.Sha256)==true ? store.LocalDocumentPath(doc) : store.ResolveDocumentPath(doc),doc.Sha256));
+                foreach(var doc in state.Documents) inputs.Add(Tuple.Create(doc.RelativePath.Replace('\\','/'),unchanged(doc.RelativePath.Replace('\\','/'),doc.Sha256)!=null ? store.LocalDocumentPath(doc) : store.ResolveDocumentPath(doc),doc.Sha256));
             foreach(var doc in state.Documents.Where(d=>!string.IsNullOrEmpty(d.IndexKey)))
             {
                 var path=store.IndexPath(doc.IndexKey);
                 if(File.Exists(path)) inputs.Add(Tuple.Create("indexes/"+doc.IndexKey+".xml.gz",path,DocumentImporter.ComputeSha256(path)));
             }
-            if(inputs.Sum(x=>current?.Files.FirstOrDefault(f=>f.Path==x.Item1 && f.Hash==x.Item3)?.Length ?? new FileInfo(x.Item2).Length)>MaximumEmbeddedBytes) throw new IOException("Les pièces dépassent 256 Mo. Activez le mode Documents partagés pour garder le classeur léger, ou réduisez le dossier.");
+            if(inputs.Sum(x=>unchanged(x.Item1,x.Item3)?.Length ?? new FileInfo(x.Item2).Length)>MaximumEmbeddedBytes) throw new IOException("Les pièces dépassent 256 Mo. Activez le mode Documents partagés pour garder le classeur léger, ou réduisez le dossier.");
             var next=new PortableManifest {Generation=(current?.Generation??0)+1,Metadata=Pack(ProjectStore.MetadataBytes(state))};
             var added=new List<string>(); string manifestId=null;
             try
             {
                 foreach(var input in inputs)
                 {
-                    var existing=current?.Files.FirstOrDefault(f=>f.Path==input.Item1 && f.Hash==input.Item3);
+                    var existing=unchanged(input.Item1,input.Item3);
                     if(existing!=null) { next.Files.Add(existing);continue; }
                     var file=new PortableFile {Path=input.Item1,Hash=input.Item3,Length=new FileInfo(input.Item2).Length};
                     if(file.Path.StartsWith("documents/",StringComparison.Ordinal) && DocumentImporter.ComputeSha256(input.Item2)!=file.Hash) throw new InvalidDataException("Pièce modifiée : "+file.Path);

@@ -71,7 +71,13 @@ namespace Doctracker.Core.Services
                 }
                 state.WorkbookPath = workbookPath ?? state.WorkbookPath;
                 SharedVaultPath = state.SharedVaultPath;
-                foreach (var document in state.Documents) ConfigureIndex(document);
+                foreach (var document in state.Documents)
+                {
+                    ConfigureIndex(document);
+                    // XmlSerializer may initialize an absent collection through its getter.
+                    // An external index must replace that empty deserialization placeholder.
+                    if (!string.IsNullOrEmpty(document.IndexKey)) { document.MarkIndexSaved(); document.ReleaseIndex(); }
+                }
                 return state;
             }
         }
@@ -98,13 +104,14 @@ namespace Doctracker.Core.Services
                 catch { state.Revision = revision; throw; }
                 SharedVaultPath = state.SharedVaultPath;
                 // Append-only metadata checkpoints; originals/indices are immutable and shared.
-                var recovery = Path.Combine(ProjectDirectory, "recovery"); Directory.CreateDirectory(recovery);
+                var recovery = Path.Combine(ProjectDirectory, "recovery");
                 try
                 {
+                    Directory.CreateDirectory(recovery);
                     File.Copy(MetadataPath, Path.Combine(recovery, DateTime.UtcNow.ToString("yyyyMMddHHmmssfffffff") + "-" + state.Revision + ".xml"));
                     foreach (var old in Directory.GetFiles(recovery, "*.xml").OrderByDescending(x => x).Skip(20)) File.Delete(old);
                 }
-                catch (IOException) { /* project.xml and its previous version are already durable */ }
+                catch (Exception failure) when (failure is IOException || failure is UnauthorizedAccessException) { /* project.xml and its previous version are already durable */ }
                 Saved?.Invoke();
             }
         }

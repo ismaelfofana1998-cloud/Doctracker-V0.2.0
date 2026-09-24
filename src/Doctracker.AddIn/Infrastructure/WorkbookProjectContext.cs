@@ -61,7 +61,7 @@ namespace Doctracker.AddIn.Infrastructure
             portable.Save(Store,State);
             dirty=false;
         }
-        private void CaptureCellLinks()
+        public void CaptureCellLinks()
         {
             var links=new List<CellLinkRecord>();var known=new HashSet<string>(State.Snips.Select(s=>s.Id));
             var cells=new Excel.ExcelCellGateway(workbook.Application);
