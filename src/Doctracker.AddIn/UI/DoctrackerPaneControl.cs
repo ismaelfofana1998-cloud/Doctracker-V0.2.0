@@ -405,7 +405,7 @@ namespace Doctracker.AddIn.UI
                 var errors = await IndexMissingAsync();
                 if (errors.Count > 0) throw new InvalidOperationException("Matching interrompu : certaines pièces ne sont pas indexées.\n" + string.Join("\n", errors));
                 var scope=SearchScope();scope.Documents=scope.Documents.Where(d=>d.IndexComplete).ToList();
-                var results = await Task.Run(() => context.Matcher.FindBatch(scope,queries.Select(q=>(IReadOnlyList<string>)q).ToList(),partial,operation.Token));
+                var results = await Task.Run(() => context.Matcher.FindBatch(scope,queries.Select(q=>(IReadOnlyList<string>)q).ToList(),true,operation.Token));
                 operation.Token.ThrowIfCancellationRequested();
                 EnsureActiveWorkbook();
                 var writes = new List<PendingWrite>();
