@@ -130,6 +130,12 @@ try {
         $comment.PageNumber=1;$comment.X=.1;$comment.Y=.2;$comment.Width=.3;$comment.Height=.2;$comment.Text='Texte test'
         $doc.Comments.Add($comment);$editCanvas.SetDocument($doc);[Windows.Forms.Application]::DoEvents()
         $editPicture=$type.GetField('picture',$flags).GetValue($editCanvas)
+        $focusProbe=[Windows.Forms.TextBox]::new();$form.Controls.Add($focusProbe);$focusProbe.BringToFront();$focusProbe.Focus() | Out-Null
+        [Windows.Forms.Application]::DoEvents()
+        if(!$focusProbe.Focused){throw 'Keyboard focus probe could not be established.'}
+        $editPicture.GetType().GetMethod('OnMouseEnter',$flags).Invoke($editPicture,@([EventArgs]::Empty)) | Out-Null
+        if(!$focusProbe.Focused){throw 'Hovering PDF stole keyboard focus.'}
+
         $script:changedZone=$null
         $handler=[Action[string,Drawing.RectangleF]]{param($id,$zone) $script:changedZone=$zone}
         $editCanvas.add_CommentGeometryChanged($handler)
@@ -137,6 +143,10 @@ try {
         $down=[Windows.Forms.MouseEventArgs]::new([Windows.Forms.MouseButtons]::Left,1,$x,$y,0)
         $move=[Windows.Forms.MouseEventArgs]::new([Windows.Forms.MouseButtons]::Left,1,$x+30,$y+20,0)
         $type.GetMethod('Picture_MouseDown',$flags).Invoke($editCanvas,@($editPicture,$down)) | Out-Null
+        $editViewport=$type.GetField('viewport',$flags).GetValue($editCanvas)
+        if(!$editViewport.Focused){throw 'Clicking PDF did not enable Escape keyboard handling.'}
+        $focusProbe.Dispose()
+
         $type.GetMethod('Picture_MouseMove',$flags).Invoke($editCanvas,@($editPicture,$move)) | Out-Null
         $type.GetMethod('Picture_MouseUp',$flags).Invoke($editCanvas,@($editPicture,$move)) | Out-Null
         if($null -eq $script:changedZone -or $script:changedZone.X -le .1 -or [Math]::Abs($comment.X-.1) -gt .001) { throw 'Comment drag did not emit a move without mutating saved metadata.' }

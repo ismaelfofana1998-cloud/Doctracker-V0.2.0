@@ -398,6 +398,8 @@ namespace Doctracker.AddIn.UI
         private void Picture_MouseDown(object sender, MouseEventArgs e)
         {
             if (currentImage == null) return;
+            // Give Escape/zoom keys to the document only after an intentional click.
+            viewport.Focus();
 
             if (e.Button == MouseButtons.Middle)
             {
