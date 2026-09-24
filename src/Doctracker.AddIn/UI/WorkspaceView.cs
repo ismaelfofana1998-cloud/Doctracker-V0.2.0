@@ -77,7 +77,7 @@ namespace Doctracker.AddIn.UI
                 var height=Math.Max(Query.PreferredHeight,Search.GetPreferredSize(Size.Empty).Height)+header.Padding.Vertical;
                 root.RowStyles[0].SizeType=SizeType.Absolute;
                 if(root.RowStyles[0].Height!=height)root.RowStyles[0].Height=height;
-                var selectors=Math.Max(Documents.PreferredHeight,Categories.PreferredHeight)+filters.Padding.Vertical;
+                var selectors=Math.Max(Documents.GetPreferredSize(Size.Empty).Height,Categories.GetPreferredSize(Size.Empty).Height)+filters.Padding.Vertical;
                 root.RowStyles[1].SizeType=SizeType.Absolute;
                 if(root.RowStyles[1].Height!=selectors)root.RowStyles[1].Height=selectors;
                 var footerHeight=Math.Max(Status.Font.Height+8,Cancel.GetPreferredSize(Size.Empty).Height);
@@ -125,6 +125,13 @@ namespace Doctracker.AddIn.UI
             DrawMode=DrawMode.OwnerDrawFixed;
             BackColor=Color.White; ForeColor=SnipTheme.Ink;
             SizeItems();
+        }
+        public override Size GetPreferredSize(Size proposedSize)
+        {
+            var size=base.GetPreferredSize(proposedSize);
+            // Owner-drawn native items are taller than ComboBox.PreferredHeight (font-only).
+            size.Height=Math.Max(size.Height,ItemHeight+8);
+            return size;
         }
         protected override void OnFontChanged(EventArgs e)
         {

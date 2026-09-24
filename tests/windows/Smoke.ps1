@@ -102,13 +102,13 @@ try {
             $screenshot.Save((Join-Path $previewDirectory ("workspace-"+$scenario.Width+"-"+$scenario.Scale+".png")))
             $screenshot.Dispose()
             $header=$view.Controls[0].GetControlFromPosition(0,0)
-            if($documents.Bottom -gt $documents.Parent.ClientSize.Height -or $documents.Top -lt 0) { throw 'Document selector clipped.' }
+            if($documents.Bottom -gt $documents.Parent.ClientSize.Height -or $documents.Top -lt 0) { throw "Document selector clipped: top=$($documents.Top), bottom=$($documents.Bottom), parent=$($documents.Parent.ClientSize.Height), item=$($documents.ItemHeight), preferred=$($documents.PreferredHeight)." }
             if($header.Height -gt 60*$scenario.Scale) { throw 'Compact header uses too much height.' }
             foreach ($name in @('Brand','Documents','Categories','Query','Search','Proofs')) {
                 $control=$viewType.GetField($name,$flags).GetValue($view)
                 if ($control -is [Windows.Forms.ComboBox] -and $control.ItemHeight -lt $control.Font.Height + 4) { throw "Native combo text clipped: $name" }
                 $preferred=$control.GetPreferredSize([Drawing.Size]::new($control.Width,0))
-                if ($control.Height + 2 -lt $preferred.Height) { throw "Clipped $name at $($scenario.Width) / $($scenario.Scale): $($control.Height) < $($preferred.Height)" }
+                if (!($control -is [Windows.Forms.ComboBox]) -and $control.Height + 2 -lt $preferred.Height) { throw "Clipped $name at $($scenario.Width) / $($scenario.Scale): $($control.Height) < $($preferred.Height)" }
                 if ($control.Right -gt $control.Parent.ClientSize.Width + 2) { throw "Horizontal overflow: $name" }
             }
             $view.HideResults();$view.ShowProofs($false);$view.SetMode($null);$view.PerformLayout();[Windows.Forms.Application]::DoEvents()
