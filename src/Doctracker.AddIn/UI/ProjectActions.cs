@@ -52,7 +52,7 @@ namespace Doctracker.AddIn.UI
         private IEnumerable<DocumentRecord> VisibleDocuments()
         {
             var category=view.Categories.SelectedItem as string;
-            return string.IsNullOrEmpty(category)||category=="Toutes les catégories"?context.State.Documents:context.State.Documents.Where(d=>d.Categories.Contains(category));
+            return string.IsNullOrEmpty(category)||category=="Toutes les catégories"?context.State.Documents:context.State.Documents.Where(d=>d.Categories.Contains(category,StringComparer.OrdinalIgnoreCase));
         }
         private ProjectState SearchScope() => new ProjectState {Documents=VisibleDocuments().ToList()};
         private void ChangeCategory()
@@ -85,7 +85,7 @@ namespace Doctracker.AddIn.UI
                         {
                             operation.Token.ThrowIfCancellationRequested();
                             var relative=Path.GetDirectoryName(file).Substring(root.TrimEnd(Path.DirectorySeparatorChar).Length).Trim(Path.DirectorySeparatorChar);
-                            try {context.Importer.Import(context.State,file,Environment.UserName,string.IsNullOrWhiteSpace(relative)?category:category+" / "+relative.Replace(Path.DirectorySeparatorChar,'/'),false);imported++;}
+                            try {var document=context.Importer.Import(context.State,file,Environment.UserName,string.IsNullOrWhiteSpace(relative)?category:category+" / "+relative.Replace(Path.DirectorySeparatorChar,'/'),false);DocumentImporter.AddCategory(document,category);imported++;}
                             catch(Exception exception){errors.Add(Path.GetFileName(file)+" : "+exception.Message);}
                             if(imported%25==0){context.Store.Save(context.State);SetStatusThreadSafe(imported+" pièces importées…");}
                         }

@@ -6,7 +6,8 @@ Le menu **…** à côté d’Importer rassemble les nouvelles actions : import 
 catégorisation, Xref, stockage, sauvegarde, restauration, réparation et export annoté.
 Le sélecteur de catégorie filtre les documents, la recherche, le matching et l’export.
 Une pièce peut appartenir à plusieurs catégories (séparées par `;`). L’import récursif
-conserve les sous-dossiers sous forme de catégories, ignore les formats non pris en
+conserve la catégorie principale sur chaque pièce et les sous-dossiers sous forme
+de catégories supplémentaires, ignore les formats non pris en
 charge et les jonctions, signale les accès refusés et déduplique les contenus identiques.
 
 ## Transmettre seulement Excel
@@ -68,7 +69,8 @@ Le stocker sur un autre support/emplacement. Sa restauration se fait dans un nou
 cache et vérifie les empreintes, les chemins et la présence des sources avant bascule.
 
 **Réparer les liens des cellules** réattache les commentaires Doctracker sans modifier
-les valeurs. Les positions des commentaires sont relevées à l’enregistrement pour
+les valeurs. Les positions des commentaires sont relevées à l’enregistrement, avant sauvegarde
+complète et avant export PDF pour
 suivre les déplacements et les copies de cellules. En cas de perte antérieure à ce
 relevé, les dernières positions connues sont utilisées : vérifier les lignes déplacées.
 Les feuilles absentes sont signalées. Une restauration ne recrée pas les valeurs,
