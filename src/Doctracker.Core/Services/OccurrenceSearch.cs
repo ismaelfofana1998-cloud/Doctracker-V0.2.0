@@ -15,6 +15,7 @@ namespace Doctracker.Core.Services
         public static IReadOnlyList<MatchCandidate> Find(ProjectState state,string query,int maximum=201,CancellationToken cancellation=default)
         {
             var result=new List<MatchCandidate>();var needle=Normalize(query);
+            var needles=SearchTerms(query);
             if(needle.Length==0 || maximum<=0)return result;
             foreach(var doc in state.Documents)
             {
@@ -30,10 +31,11 @@ namespace Doctracker.Core.Services
                             for(var i=0;i<token.Length;i++)owners.Add(w);
                         }
                         var haystack=text.ToString();
-                        foreach(var offset in Offsets(haystack,needle))
+                        foreach(var occurrence in Matches(haystack,needles))
                         {
                             cancellation.ThrowIfCancellationRequested();
-                            var selected=words.Skip(owners[offset]).Take(owners[offset+needle.Length-1]-owners[offset]+1).ToList();
+                            var offset=occurrence.Item1;var length=occurrence.Item2;
+                            var selected=words.Skip(owners[offset]).Take(owners[offset+length-1]-owners[offset]+1).ToList();
                             var hit=Hit(doc,page,string.Join(" ",selected.Select(w=>w.Text)));
                             hit.X=selected.Min(w=>w.X);hit.Y=selected.Min(w=>w.Y);
                             hit.Width=selected.Max(w=>w.X+w.Width)-hit.X;hit.Height=selected.Max(w=>w.Y+w.Height)-hit.Y;
@@ -42,7 +44,7 @@ namespace Doctracker.Core.Services
                         }
                         // Some older PDFs have text but no usable word boxes.
                         if(result.Count==before)
-                            foreach(var offset in Offsets(Normalize(page.Text),needle))
+                            foreach(var occurrence in Matches(Normalize(page.Text),needles))
                             {result.Add(Hit(doc,page,page.Text));if(result.Count>=maximum)return result;}
                     }
                 }
@@ -53,6 +55,19 @@ namespace Doctracker.Core.Services
         private static MatchCandidate Hit(DocumentRecord doc,PageTextRecord page,string evidence)=>new MatchCandidate {
             DocumentId=doc.Id,PageNumber=page.PageNumber,Score=1,IsExact=true,
             Evidence=(evidence??"").Length>180 ? evidence.Substring(0,180)+"…" : evidence??"" };
+        private static string[] SearchTerms(string query)
+        {
+            DateTime date;
+            var formats=new[]{"yyyy-MM-dd","d/M/yyyy","dd/MM/yyyy","d-M-yyyy","dd-MM-yyyy","d.M.yyyy","dd.MM.yyyy"};
+            if(DateTime.TryParseExact((query??"").Trim(),formats,CultureInfo.InvariantCulture,DateTimeStyles.None,out date))
+                return formats.Select(f=>Normalize(date.ToString(f,CultureInfo.InvariantCulture))).Distinct().ToArray();
+            return new[]{Normalize(query)};
+        }
+        private static IEnumerable<Tuple<int,int>> Matches(string text,string[] queries)
+        {
+            var matches=queries.SelectMany(q=>Offsets(text,q).Select(offset=>Tuple.Create(offset,q.Length)));
+            return queries.Length==1 ? matches : matches.GroupBy(hit=>hit.Item1).Select(g=>g.OrderByDescending(hit=>hit.Item2).First()).OrderBy(hit=>hit.Item1);
+        }
         private static IEnumerable<int> Offsets(string text,string query)
         {
             var start=0;

@@ -116,7 +116,7 @@ namespace Doctracker.AddIn.Excel
         }
         public string GetSnipId(ExcelInterop.Range target) => GetSnipIds(target).LastOrDefault();
 
-        public static string QueryText(ExcelInterop.Range cell)
+        public static string QueryText(ExcelInterop.Range cell, bool forSearch = false)
         {
             var value = cell.Value; // preserves VT_DATE when Excel formatted the value as a date
             if (value is DateTime) return ((DateTime)value).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
@@ -126,7 +126,7 @@ namespace Doctracker.AddIn.Excel
                 var number = ((double)raw).ToString("0.################", CultureInfo.InvariantCulture);
                 // Three decimal places must not look like a thousands group to the text parser.
                 var dot = number.IndexOf('.');
-                if (dot >= 0 && number.Length - dot - 1 == 3) number += "0";
+                if (!forSearch && dot >= 0 && number.Length - dot - 1 == 3) number += "0";
                 return number;
             }
             return Convert.ToString(raw, CultureInfo.InvariantCulture);

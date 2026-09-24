@@ -298,7 +298,7 @@ namespace Doctracker.AddIn.UI
             try
             {
                 var target = cells.GetSingleTarget();
-                var query = ExcelCellGateway.QueryText(target);
+                var query = ExcelCellGateway.QueryText(target,true);
                 if (string.IsNullOrWhiteSpace(query))
                     throw new InvalidOperationException("La cellule active est vide.");
                 searchBox.Text = query;

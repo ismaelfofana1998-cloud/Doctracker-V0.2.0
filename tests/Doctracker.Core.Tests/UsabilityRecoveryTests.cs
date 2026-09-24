@@ -59,6 +59,12 @@ namespace Doctracker.Core.Tests
             var state=Fixture();state.Documents[0].IndexedPages[0].Words.Clear();state.Documents[0].IndexedPages[0].Text="PréfixeBFA-suffixe Total=6 489,83EUR 500X300Z35 **";
             Assert.NotEmpty(OccurrenceSearch.Find(state,query));
         }
+        [Theory] [InlineData("14/03/2026")] [InlineData("14-3-2026")] [InlineData("14.03.2026")]
+        public void Excel_iso_date_query_finds_the_printed_document_date(string printed)
+        {
+            var state=Fixture();var page=state.Documents[0].IndexedPages[0];page.Words.Clear();page.Text="Date : "+printed;
+            Assert.Single(OccurrenceSearch.Find(state,"2026-03-14"));
+        }
         [Fact] public void Repeated_occurrences_on_one_page_have_distinct_locations()
         {
             var state=Fixture();state.Documents[0].IndexedPages[0].Words[1].Text="BFA";
