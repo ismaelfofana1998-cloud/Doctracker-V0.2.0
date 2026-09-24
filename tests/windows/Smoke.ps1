@@ -46,12 +46,15 @@ try {
     [void][IO.Directory]::CreateDirectory($previewDirectory)
     $viewType = $assembly.GetType('Doctracker.AddIn.UI.WorkspaceView', $true)
     foreach ($scenario in @(@{Width=760;Height=850;Scale=1.0}, @{Width=420;Height=850;Scale=1.0}, @{Width=840;Height=1500;Scale=2.0})) {
-        # A control host avoids the CI desktop's 768px window-height cap. This
-        # renders the requested physical size instead of silently shrinking a Form.
-        $form = [Windows.Forms.Panel]::new()
+        # Keep a visible native window so WM_PRINT renders edit/combo controls.
+        # The undocked view may exceed the virtual desktop; its bitmap retains
+        # the requested physical dimensions without Windows clamping a Form.
+        $form = [Windows.Forms.Form]::new()
         $view = [Activator]::CreateInstance($viewType, $true)
         try {
-            $form.ClientSize = [Drawing.Size]::new($scenario.Width,$scenario.Height)
+            $form.ClientSize = [Drawing.Size]::new(800,600)
+            $view.Dock=[Windows.Forms.DockStyle]::None
+            $view.Size=[Drawing.Size]::new($scenario.Width,$scenario.Height)
             $form.Controls.Add($view)
             $documents = $viewType.GetField('Documents', $flags).GetValue($view)
             [void]$documents.Items.Add('Facture - septembre 2026.pdf'); $documents.SelectedIndex=0
@@ -66,12 +69,12 @@ try {
             $viewCanvas=$viewType.GetField('Canvas', $flags).GetValue($view)
             $viewCanvas.LoadDocument($imagePath)
             $viewCanvas.NavigateTo($imagePath,$snip)
-            $form.CreateControl(); $view.CreateControl(); [Windows.Forms.Application]::DoEvents()
+            $form.Show(); [Windows.Forms.Application]::DoEvents()
             if ($scenario.Scale -ne 1) {
                 # Simulate larger Windows text and geometry; actual Office per-monitor DPI remains a desktop check.
                 $view.Scale([Drawing.SizeF]::new($scenario.Scale,$scenario.Scale))
                 $view.Font=[Drawing.Font]::new('Segoe UI',9*$scenario.Scale)
-                $form.ClientSize=[Drawing.Size]::new($scenario.Width,$scenario.Height)
+                $view.Size=[Drawing.Size]::new($scenario.Width,$scenario.Height)
             }
             $view.PerformLayout(); [Windows.Forms.Application]::DoEvents()
             $screenshot=[Drawing.Bitmap]::new($view.Width,$view.Height)

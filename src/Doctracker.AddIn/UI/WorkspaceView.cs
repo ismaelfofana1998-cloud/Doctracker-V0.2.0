@@ -32,6 +32,7 @@ namespace Doctracker.AddIn.UI
         private readonly ToolTip tips = new ToolTip();
         public event Action<SnipType?> ModeChanged;
         private SnipType? activeMode;
+        private int resultTotal;
 
         public WorkspaceView()
         {
@@ -61,6 +62,7 @@ namespace Doctracker.AddIn.UI
             var close=SnipTheme.Button("Masquer");close.Click+=(s,e)=>resultsPanel.Visible=false;
             resultsHeader.Controls.Add(resultCount,0,0);resultsHeader.Controls.Add(close,1,0);Add(resultsPanel,resultsHeader);
             Results.Height=76;Add(resultsPanel,Results,SizeType.Absolute,76);Add(root,resultsPanel);
+            Results.FontChanged+=(s,e)=>SizeResults();
             modes = new FlowLayoutPanel {AutoSize=true,Dock=DockStyle.Fill,WrapContents=true,Padding=new Padding(8,4,8,4),Margin=Padding.Empty,BackColor=SnipTheme.Surface};
             foreach(SnipType type in new[]{SnipType.Text,SnipType.Number,SnipType.Date,SnipType.Sum,SnipType.Table,SnipType.Validation,SnipType.Exception})
             {
@@ -86,7 +88,8 @@ namespace Doctracker.AddIn.UI
             ModeState.Text=type.HasValue ? SnipTheme.LabelFor(type.Value)+" · Dessinez une zone. Le mode reste actif." : "Choisissez un snip, puis dessinez une zone.";
             ModeState.ForeColor=type.HasValue?SnipTheme.ColorFor(type.Value):SnipTheme.Muted;
         }
-        public void ShowResults(int count) { resultCount.Text=count+" résultat(s)";resultsPanel.Visible=true; }
+        public void ShowResults(int count) { resultTotal=count;resultCount.Text=count+" résultat(s)";SizeResults();resultsPanel.Visible=true; }
+        private void SizeResults() { resultsPanel.RowStyles[1].Height=Math.Max(1,Math.Min(3,resultTotal))*Results.ItemHeight+8; }
         public void HideResults() { resultsPanel.Visible=false; }
         public void ShowProofs(bool visible) { proofPanel.Visible=visible; }
         public void SetBusy(bool busy) { modes.Enabled=Import.Enabled=Search.Enabled=Proofs.Enabled=!busy;Cancel.Visible=busy; }
