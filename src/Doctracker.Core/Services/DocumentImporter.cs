@@ -20,7 +20,7 @@ namespace Doctracker.Core.Services
             this.store = store ?? throw new ArgumentNullException(nameof(store));
         }
 
-        public DocumentRecord Import(ProjectState state, string sourcePath, string actor, string category = null, bool persist = true)
+        public DocumentRecord Import(ProjectState state, string sourcePath, string actor, string category = null, bool persist = true, string sourceName = null, string sourceHash = null)
         {
             if (state == null) throw new ArgumentNullException(nameof(state));
             if (!File.Exists(sourcePath)) throw new FileNotFoundException("Document not found.", sourcePath);
@@ -42,6 +42,7 @@ namespace Doctracker.Core.Services
                     Directory.CreateDirectory(Path.GetDirectoryName(existingPath));
                     File.Copy(sourcePath, existingPath, false);
                 }
+                duplicate.LastImportedAtUtc = DateTime.UtcNow;
                 AddCategory(duplicate, category);
                 if (persist) store.Save(state);
                 return duplicate;
@@ -60,6 +61,8 @@ namespace Doctracker.Core.Services
                 RelativePath = Path.Combine("documents", safeName),
                 Sha256 = hash,
                 ByteLength = new FileInfo(destination).Length,
+                LastImportedAtUtc = DateTime.UtcNow,
+                OriginalSourceName = sourceName ?? string.Empty, OriginalSourceHash = sourceHash ?? string.Empty,
                 AddedAtUtc = DateTime.UtcNow
             };
 

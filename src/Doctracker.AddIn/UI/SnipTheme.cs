@@ -53,6 +53,10 @@ namespace Doctracker.AddIn.UI
                 g.ScaleTransform(size / 24f, size / 24f);
                 switch (key)
                 {
+                    case "Comment":
+                        g.DrawRectangle(pen,3,4,18,13);g.DrawLines(pen,new[]{new PointF(7,17),new PointF(7,21),new PointF(12,17)});g.DrawLine(pen,7,8,17,8);g.DrawLine(pen,7,12,14,12);break;
+                    case "Delete":
+                        g.DrawLine(pen,4,6,20,6);g.DrawRectangle(pen,6,6,12,15);g.DrawLine(pen,9,3,15,3);g.DrawLine(pen,10,10,10,17);g.DrawLine(pen,14,10,14,17);break;
                     case "Validation": case "ReviewProof":
                         g.DrawLines(pen, new[] {new PointF(4,12),new PointF(9,17),new PointF(20,6)}); break;
                     case "Exception":

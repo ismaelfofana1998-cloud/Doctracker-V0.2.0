@@ -19,6 +19,10 @@ namespace Doctracker.AddIn.UI
         public readonly Label Status = Label("Prêt · Cliquez sur une cellule liée pour afficher sa preuve.");
         public readonly Button Import = SnipTheme.Button("Importer", "ImportDocuments");
         public readonly Button Search = SnipTheme.Button("Rechercher", "SearchDocuments");
+        public readonly Button Comment = SnipTheme.Button("Commenter", "Comment", Color.Red);
+        public readonly Button DeleteSnip = SnipTheme.Button("", "Delete", Color.Red);
+        public readonly Button Reading = SnipTheme.Button("Lecture", "Fit");
+        public readonly ToolStripMenuItem DeleteSnipMenu = new ToolStripMenuItem("Supprimer le snip sélectionné…");
         public readonly Button Cancel = SnipTheme.Button("Annuler");
         public readonly ToolStripMenuItem Reindex = new ToolStripMenuItem("Réindexer les documents");
         public readonly ToolStripMenuItem Remove = new ToolStripMenuItem("Retirer le document sélectionné");
@@ -36,6 +40,9 @@ namespace Doctracker.AddIn.UI
         public readonly DocumentCanvas Canvas = new DocumentCanvas();
         private readonly TableLayoutPanel resultsPanel;
         private readonly TableLayoutPanel proofPanel;
+        private readonly List<Control> secondary = new List<Control>();
+        private bool readingMode;
+        private bool commentMode;
         private readonly Label resultCount = Label("");
         private readonly FlowLayoutPanel modes;
         private readonly Dictionary<SnipType, Button> modeButtons = new Dictionary<SnipType, Button>();
@@ -53,7 +60,7 @@ namespace Doctracker.AddIn.UI
             BackColor = Color.White; ForeColor = SnipTheme.Ink; Dock = DockStyle.Fill;
             Size = new Size(760,700);
             var root = Rows(); root.AutoSize=false; root.Dock = DockStyle.Fill;
-            var header = Row(38,62); header.Padding = new Padding(10,10,10,4);
+            var header = Row(38,62); header.Padding = new Padding(8,4,8,2);
             var brand = Label("Doctracker"); brand.Font = new Font("Segoe UI Semibold",14,FontStyle.Bold); brand.ForeColor=SnipTheme.Ink;
             brand.Anchor=AnchorStyles.Left; header.Controls.Add(brand,0,0);
             var picker = Rows(); picker.Dock=DockStyle.Fill;
@@ -65,17 +72,21 @@ namespace Doctracker.AddIn.UI
             };
             var actions = new FlowLayoutPanel { AutoSize=true, Dock=DockStyle.Fill, Padding=new Padding(8,0,8,4), Margin=Padding.Empty };
             var more = SnipTheme.Button("", "More"); more.AccessibleName="Options des documents";
-            menu.Items.Add(ImportFolder);menu.Items.Add(Categorize);menu.Items.Add(CrossReference);
+            menu.Items.Add(DeleteSnipMenu);menu.Items.Add(ImportFolder);menu.Items.Add(Categorize);menu.Items.Add(CrossReference);
             menu.Items.Add(new ToolStripSeparator());menu.Items.Add(SharedStorage);menu.Items.Add(Backup);menu.Items.Add(Restore);menu.Items.Add(RepairLinks);menu.Items.Add(RecoveryFolder);menu.Items.Add(ExportPdf);
             menu.Items.Add(new ToolStripSeparator());menu.Items.Add(Reindex); menu.Items.Add(Remove); more.Click+=(s,e)=>menu.Show(more,new Point(0,more.Height));
             tips.SetToolTip(more,"Dossiers, catégories, Xref, partage, sauvegarde et export");
-            IndexState.Margin=new Padding(8,10,0,0);
-            actions.Controls.Add(Import);actions.Controls.Add(more);actions.Controls.Add(IndexState);Add(root,actions);
-            var filters=Row(100,0);filters.ColumnStyles[1]=new ColumnStyle(SizeType.AutoSize);filters.Padding=new Padding(10,0,10,5);filters.Controls.Add(Categories,0,0);filters.Controls.Add(PartialReferences,1,0);Add(root,filters);
+            IndexState.Margin=new Padding(4,10,0,0);
+            Reading.Click+=(s,e)=>SetReadingMode(!readingMode);
+            tips.SetToolTip(Reading,"Agrandir la surface du document en masquant les outils secondaires");
+            tips.SetToolTip(DeleteSnip,"Supprimer le snip sélectionné, sans modifier la valeur Excel");
+            DeleteSnip.AccessibleName="Supprimer le snip sélectionné";
+            actions.Controls.Add(Import);actions.Controls.Add(more);actions.Controls.Add(Reading);actions.Controls.Add(IndexState);Add(root,actions);
+            var filters=Row(100,0);filters.ColumnStyles[1]=new ColumnStyle(SizeType.AutoSize);filters.Padding=new Padding(10,0,10,5);filters.Controls.Add(Categories,0,0);filters.Controls.Add(PartialReferences,1,0);Add(root,filters);secondary.Add(filters);
             Categories.Items.Add("Toutes les catégories");Categories.SelectedIndex=0;
             tips.SetToolTip(PartialReferences,"Cherche X300 dans 500X300Z35. Montants et dates restent exacts. Les ambiguïtés sont signalées.");
             var searchRow = Row(100,0);searchRow.ColumnStyles[1]=new ColumnStyle(SizeType.AutoSize);searchRow.Padding=new Padding(10,0,10,6);
-            Query.Anchor=AnchorStyles.Left|AnchorStyles.Right;searchRow.Controls.Add(Query,0,0);searchRow.Controls.Add(Search,1,0);Add(root,searchRow);
+            Query.Anchor=AnchorStyles.Left|AnchorStyles.Right;searchRow.Controls.Add(Query,0,0);searchRow.Controls.Add(Search,1,0);Add(root,searchRow);secondary.Add(searchRow);
             resultsPanel = Rows();resultsPanel.Padding=new Padding(12,0,12,8);resultsPanel.Visible=false;
             var resultsHeader=Row(100,0);resultsHeader.ColumnStyles[1]=new ColumnStyle(SizeType.AutoSize);
             var close=SnipTheme.Button("Masquer");close.Click+=(s,e)=>resultsPanel.Visible=false;
@@ -90,13 +101,14 @@ namespace Doctracker.AddIn.UI
                 tips.SetToolTip(button,SnipTheme.LabelFor(type)+" : dessiner une zone. Recliquez pour désactiver.");
                 modeButtons.Add(type,button);modes.Controls.Add(button);
             }
-            Add(root,modes);
-            ModeState.Padding=new Padding(12,5,12,7);ModeState.BackColor=SnipTheme.Surface;Add(root,ModeState);
+            modes.Controls.Add(Comment); tips.SetToolTip(Comment,"Commentaire rouge : dessiner une zone, puis saisir le texte. Clic droit pour modifier ou supprimer.");
+            Add(root,modes);secondary.Add(modes);
+            ModeState.Visible=false;ModeState.Padding=new Padding(10,2,10,3);ModeState.BackColor=SnipTheme.Surface;Add(root,ModeState);
             proofPanel=Row(0,100);proofPanel.ColumnStyles[0]=new ColumnStyle(SizeType.AutoSize);proofPanel.Padding=new Padding(10,5,10,5);proofPanel.Visible=false;
-            proofPanel.Controls.Add(Label("Preuve"),0,0);proofPanel.Controls.Add(Proofs,1,0);Add(root,proofPanel);
+            proofPanel.Controls.Add(Label("Preuve"),0,0);proofPanel.Controls.Add(Proofs,1,0);proofPanel.ColumnCount=3;proofPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));proofPanel.Controls.Add(DeleteSnip,2,0);Add(root,proofPanel);
             Add(root,Canvas,SizeType.Percent,100);
             Cancel.Visible=false;Add(root,Cancel);
-            Status.Padding=new Padding(12,8,12,8);Status.BackColor=SnipTheme.Surface;Add(root,Status);
+            Status.Padding=new Padding(10,4,10,4);Status.BackColor=SnipTheme.Surface;Add(root,Status);
             Action sizeHeader = () => {
                 // Reserve both caption and native picker heights, including margins.
                 // Nested autosized tables alone can underestimate owner-drawn combos.
@@ -108,21 +120,42 @@ namespace Doctracker.AddIn.UI
             Documents.FontChanged+=(s,e)=>sizeHeader();
             header.Layout+=(s,e)=>sizeHeader();
             sizeHeader();
-            Controls.Add(root);
-            Resize+=(s,e)=> { var w=Math.Max(100,ClientSize.Width); ModeState.MaximumSize=new Size(w,0);Status.MaximumSize=new Size(w,0);IndexState.MaximumSize=new Size(Math.Max(100,w-155),0); modes.MaximumSize=new Size(w,0); };
+            Controls.Add(root); SizeTools();
+            Resize+=(s,e)=> { var w=Math.Max(100,ClientSize.Width); ModeState.MaximumSize=new Size(w,0);Status.MaximumSize=new Size(w,0);IndexState.MaximumSize=new Size(Math.Max(100,w-155),0); modes.MaximumSize=new Size(w,0);SizeTools(); };
         }
         public void SetMode(SnipType? type)
         {
-            activeMode=type;Canvas.ActiveType=type;
+            activeMode=type;commentMode=false;Canvas.CommentMode=false;Comment.BackColor=Color.White;Canvas.ActiveType=type;
+            ModeState.Visible=type.HasValue && !readingMode;
             foreach(var pair in modeButtons){ pair.Value.BackColor=type==pair.Key?SnipTheme.Tint(pair.Key):Color.White; pair.Value.FlatAppearance.BorderSize=type==pair.Key?1:0;pair.Value.FlatAppearance.BorderColor=SnipTheme.ColorFor(pair.Key); }
             ModeState.Text=type.HasValue ? SnipTheme.LabelFor(type.Value)+" · Dessinez une zone. Le mode reste actif." : "Choisissez un snip, puis dessinez une zone.";
             ModeState.ForeColor=type.HasValue?SnipTheme.ColorFor(type.Value):SnipTheme.Muted;
         }
-        public void ShowResults(int count) { resultTotal=count;resultCount.Text=count+" résultat(s)";SizeResults();resultsPanel.Visible=true; }
+        private void SizeTools()
+        {
+            var compact=ClientSize.Width < Font.Height * 48;
+            foreach(var pair in modeButtons) {pair.Value.Text=compact ? "" : SnipTheme.LabelFor(pair.Key);pair.Value.AccessibleName=SnipTheme.LabelFor(pair.Key);}
+            Comment.Text=compact ? "" : "Commenter";Comment.AccessibleName="Commentaire rouge";
+        }
+        public void SetCommentMode(bool active)
+        {
+            SetMode(null);commentMode=active;Canvas.CommentMode=active;
+            Comment.BackColor=active ? Color.MistyRose : Color.White;
+            ModeState.Text="Commentaire · Dessinez une zone puis saisissez le texte.";ModeState.ForeColor=Color.Red;
+            ModeState.Visible=active && !readingMode;
+        }
+        public void SetReadingMode(bool enabled)
+        {
+            readingMode=enabled;foreach(var control in secondary)control.Visible=!enabled;
+            if(enabled)resultsPanel.Visible=false;
+            ModeState.Visible=!enabled && (activeMode.HasValue || commentMode);
+            Reading.Text=enabled ? "Outils" : "Lecture";PerformLayout();
+        }
+        public void ShowResults(int count) { SetReadingMode(false); resultTotal=count;resultCount.Text=count+" résultat(s)";SizeResults();resultsPanel.Visible=true; }
         private void SizeResults() { resultsPanel.RowStyles[1].Height=Math.Max(1,Math.Min(3,resultTotal))*Results.ItemHeight+8; }
         public void HideResults() { resultsPanel.Visible=false; }
         public void ShowProofs(bool visible) { proofPanel.Visible=visible; }
-        public void SetBusy(bool busy) { modes.Enabled=Import.Enabled=Search.Enabled=Proofs.Enabled=Categories.Enabled=PartialReferences.Enabled=!busy;Cancel.Visible=busy; }
+        public void SetBusy(bool busy) { modes.Enabled=Import.Enabled=Search.Enabled=Proofs.Enabled=Categories.Enabled=PartialReferences.Enabled=Comment.Enabled=DeleteSnip.Enabled=!busy;Cancel.Visible=busy; }
         private static Label Label(string text) => new Label {Text=text,AutoSize=true,Dock=DockStyle.Fill,ForeColor=SnipTheme.Muted,Margin=Padding.Empty,Padding=new Padding(0,3,0,3)};
         private static TableLayoutPanel Rows()
         {

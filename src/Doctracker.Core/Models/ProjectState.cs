@@ -9,7 +9,7 @@ namespace Doctracker.Core.Models
     public sealed class ProjectState
     {
         [XmlAttribute]
-        public int SchemaVersion { get; set; } = 3;
+        public int SchemaVersion { get; set; } = 4;
 
         public string ProjectId { get; set; } = Guid.NewGuid().ToString("N");
         public List<CellLinkRecord> CellLinks { get; set; } = new List<CellLinkRecord>();
@@ -56,6 +56,10 @@ namespace Doctracker.Core.Models
         public string TestReference { get; set; } = string.Empty;
         public int ReferenceNumber { get; set; }
         public long ByteLength { get; set; }
+        public DateTime LastImportedAtUtc { get; set; }
+        public string OriginalSourceName { get; set; } = string.Empty;
+        public string OriginalSourceHash { get; set; } = string.Empty;
+        public List<DocumentComment> Comments { get; set; } = new List<DocumentComment>();
         public string IndexKey { get; set; } = string.Empty;
         [XmlIgnore]
         public string DisplayName => string.IsNullOrWhiteSpace(TestReference) ? OriginalName : TestReference + " - " + ReferenceNumber.ToString("D2") + " - " + OriginalName;
@@ -80,6 +84,18 @@ namespace Doctracker.Core.Models
         }
         public void MarkIndexSaved() { IndexDirty = false; }
         public void ReleaseIndex() { if (PageLoader != null && !IndexDirty) pages = null; }
+    }
+
+    [Serializable]
+    public sealed class DocumentComment
+    {
+        public string Id { get; set; } = Guid.NewGuid().ToString("N");
+        public int PageNumber { get; set; }
+        public double X { get; set; }
+        public double Y { get; set; }
+        public double Width { get; set; }
+        public double Height { get; set; }
+        public string Text { get; set; } = string.Empty;
     }
 
     [Serializable]

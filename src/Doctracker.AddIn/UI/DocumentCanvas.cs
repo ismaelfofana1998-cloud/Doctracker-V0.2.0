@@ -35,6 +35,16 @@ namespace Doctracker.AddIn.UI
         private int imagePageCount = 1;
         private double zoom = 1d;
         private bool fitToViewport = true;
+        private bool fitWidth = true;
+        private DocumentRecord document;
+        private readonly ContextMenuStrip popup = new ContextMenuStrip();
+        private readonly ContextMenuStrip zoomMenu = new ContextMenuStrip();
+        public bool CommentMode { get; set; }
+        public event Action<string> DeleteProofRequested;
+        public event Action<string> ProofSelected;
+        public event Action<string> EditCommentRequested;
+        public event Action<string> DeleteCommentRequested;
+        public void SetDocument(DocumentRecord value) { document = value; picture.Invalidate(); }
         private Point dragStart;
         private Point dragEnd;
         private bool dragging;
@@ -82,7 +92,7 @@ namespace Doctracker.AddIn.UI
                 ForeColor = Color.FromArgb(45, 53, 64)
             };
             zoomOutButton = CreateToolbarButton("", "Réduire le zoom", "Minus");
-            fitButton = CreateToolbarButton("Adapter", "Adapter la page à la fenêtre", "Fit");
+            fitButton = CreateToolbarButton("Largeur", "Adapter à la largeur ; clic droit pour voir la page entière", "Fit");
             zoomInButton = CreateToolbarButton("", "Agrandir le zoom", "Plus");
             zoomLabel = new Label
             {
@@ -95,7 +105,11 @@ namespace Doctracker.AddIn.UI
             previousButton.Click += (sender, args) => ShowPage(pageIndex - 1);
             nextButton.Click += (sender, args) => ShowPage(pageIndex + 1);
             zoomOutButton.Click += (sender, args) => SetZoom(zoom - 0.15d, false);
-            fitButton.Click += (sender, args) => FitPage();
+            fitButton.Click += (sender, args) => FitWidth();
+            zoomMenu.Items.Add("Adapter à la largeur", null, (s,e) => FitWidth());
+            zoomMenu.Items.Add("Page entière", null, (s,e) => FitPage());
+            zoomMenu.Items.Add("100 %", null, (s,e) => SetZoom(1d / DisplayScale(), false));
+            fitButton.ContextMenuStrip = zoomMenu;
             zoomInButton.Click += (sender, args) => SetZoom(zoom + 0.15d, false);
 
             toolbar.Controls.Add(previousButton);
@@ -111,7 +125,7 @@ namespace Doctracker.AddIn.UI
                 Dock = DockStyle.Fill,
                 AutoScroll = true,
                 BackColor = Color.FromArgb(235, 239, 245),
-                Padding = new Padding(12)
+                Padding = new Padding(4)
             };
             viewport.Resize += (sender, args) =>
             {
@@ -129,6 +143,10 @@ namespace Doctracker.AddIn.UI
             picture.MouseMove += Picture_MouseMove;
             picture.MouseUp += Picture_MouseUp;
             picture.Paint += Picture_Paint;
+            picture.MouseEnter += (s,e) => viewport.Focus();
+            picture.MouseWheel += (s,e) => {
+                if ((ModifierKeys & Keys.Control) != 0) SetZoom(zoom * (e.Delta > 0 ? 1.15 : 1 / 1.15), false);
+            };
 
             viewport.Controls.Add(picture);
             Controls.Add(viewport);
@@ -158,7 +176,7 @@ namespace Doctracker.AddIn.UI
             {
                 currentPath = path;
                 pageIndex = 0;
-                fitToViewport = true;
+                fitToViewport = true; fitWidth = true;
                 normalizedSelection = null;
 
                 if (string.Equals(Path.GetExtension(path), ".pdf", StringComparison.OrdinalIgnoreCase))
@@ -202,7 +220,7 @@ namespace Doctracker.AddIn.UI
 
             ShowPage(Math.Max(0, targetPageNumber - 1));
             normalizedSelection = null;
-            FitPage();
+            FitWidth();
             picture.Invalidate();
         }
 
@@ -297,28 +315,28 @@ namespace Doctracker.AddIn.UI
         {
             if (currentImage == null) return;
 
-            viewport.AutoScroll = !fitToViewport;
+            viewport.AutoScroll = !fitToViewport || fitWidth;
             if (fitToViewport)
             {
-                var availableWidth = Math.Max(120, viewport.ClientSize.Width - viewport.Padding.Horizontal - 4);
+                var availableWidth = Math.Max(120, viewport.Width - viewport.Padding.Horizontal - SystemInformation.VerticalScrollBarWidth - 2);
                 var availableHeight = Math.Max(120, viewport.ClientSize.Height - viewport.Padding.Vertical - 4);
                 var widthRatio = availableWidth / (double)currentImage.Width;
                 var heightRatio = availableHeight / (double)currentImage.Height;
-                zoom = Math.Min(widthRatio, heightRatio);
-                zoom = Math.Max(0.02d, Math.Min(1.0d, zoom));
+                zoom = fitWidth ? widthRatio : Math.Min(widthRatio, heightRatio);
+                zoom = Math.Max(0.02d, Math.Min(3.0d, zoom));
             }
 
             var width = Math.Max(2, (int)Math.Round(currentImage.Width * zoom));
             var height = Math.Max(2, (int)Math.Round(currentImage.Height * zoom));
-            if (fitToViewport) viewport.AutoScrollPosition = Point.Empty;
-            viewport.AutoScrollMinSize = fitToViewport ? Size.Empty : new Size(width + viewport.Padding.Horizontal, height + viewport.Padding.Vertical);
+            if (fitToViewport && !fitWidth) viewport.AutoScrollPosition = Point.Empty;
+            viewport.AutoScrollMinSize = fitToViewport && !fitWidth ? Size.Empty : new Size(width + viewport.Padding.Horizontal, height + viewport.Padding.Vertical);
             picture.Size = new Size(width, height);
             // Centre fitted pages; preserve the real scroll origin when zoomed in.
             picture.Location = new Point(Math.Max(viewport.Padding.Left, (viewport.ClientSize.Width - width) / 2) + viewport.AutoScrollPosition.X,
                 viewport.Padding.Top + viewport.AutoScrollPosition.Y);
             picture.Image = currentImage;
             picture.Invalidate();
-            zoomLabel.Text = Math.Round(zoom * 100d) + " %";
+            zoomLabel.Text = Math.Round(zoom * DisplayScale() * 100d) + " %";
         }
 
         private void SetZoom(double requestedZoom, bool fit)
@@ -332,10 +350,31 @@ namespace Doctracker.AddIn.UI
             UpdatePictureLayout();
         }
 
-        private void FitPage()
+        private double DisplayScale()
         {
-            SetZoom(1d, true);
+            if (currentImage == null) return 1;
+            var logicalWidth = pdf != null ? pdf.PageSizes[pageIndex].Width * 96d / 72d : currentImage.Width * 96d / Math.Max(1, currentImage.HorizontalResolution);
+            return currentImage.Width / Math.Max(1, logicalWidth);
         }
+        public void FitWidth() { fitWidth = true; SetZoom(1d, true); }
+        public void FitPage() { fitWidth = false; SetZoom(1d, true); }
+        public RectangleF FitComment(RectangleF zone, string text)
+        {
+            // Measure at a stable page width so wrapping is independent of current zoom.
+            var referenceSize = new Size(1000, (int)(1000d * currentImage.Height / currentImage.Width));
+            var padding = 12f;
+            var width = zone.Width * referenceSize.Width - padding;
+            if (width < 40) throw new InvalidOperationException("Dessinez une zone de commentaire plus large.");
+            using (var graphics = picture.CreateGraphics())
+            using (var font = new Font("Segoe UI", DocumentOverlay.FontPixels(referenceSize.Width), FontStyle.Regular, GraphicsUnit.Pixel))
+            {
+                var needed = (graphics.MeasureString(text, font, (int)width).Height + padding + 6) / referenceSize.Height;
+                zone.Height = Math.Max(zone.Height, needed);
+                if (zone.Bottom > 1) throw new InvalidOperationException("Ce texte dépasse le bas de la page. Dessinez une zone plus large ou plus haute dans la page.");
+                return zone;
+            }
+        }
+
 
         private void Picture_MouseDown(object sender, MouseEventArgs e)
         {
@@ -351,6 +390,21 @@ namespace Doctracker.AddIn.UI
                 return;
             }
 
+            if (e.Button == MouseButtons.Right)
+            {
+                popup.Items.Clear();
+                var point = new PointF(e.X / (float)picture.Width, e.Y / (float)picture.Height);
+                var comment = document?.Comments.LastOrDefault(c => c.PageNumber == CurrentPageNumber && new RectangleF((float)c.X,(float)c.Y,(float)c.Width,(float)c.Height).Contains(point));
+                var proof = ProofAt(point);
+                if (comment != null)
+                {
+                    popup.Items.Add("Modifier le commentaire…", null, (s,a) => EditCommentRequested?.Invoke(comment.Id));
+                    popup.Items.Add("Supprimer le commentaire", null, (s,a) => DeleteCommentRequested?.Invoke(comment.Id));
+                }
+                else if (proof != null) popup.Items.Add("Supprimer ce snip", null, (s,a) => DeleteProofRequested?.Invoke(proof.Id));
+                if (popup.Items.Count > 0) popup.Show(picture, e.Location);
+                return;
+            }
             if (e.Button != MouseButtons.Left) return;
             picture.Capture = true;
             dragging = true;
@@ -401,11 +455,19 @@ namespace Doctracker.AddIn.UI
                     rectangle.Height / (float)picture.ClientSize.Height);
                 SelectionCompleted?.Invoke(this, EventArgs.Empty);
             }
+            else
+            {
+                var proof = ProofAt(new PointF(e.X / (float)picture.Width, e.Y / (float)picture.Height));
+                if (proof != null) { NavigateTo(currentPath, proof); ProofSelected?.Invoke(proof.Id); }
+            }
             picture.Invalidate();
         }
+        private SnipRecord ProofAt(PointF point) => proofs.LastOrDefault(p => p.PageNumber == CurrentPageNumber &&
+            new RectangleF((float)p.X,(float)p.Y,(float)p.Width,(float)p.Height).Contains(point));
 
         private void Picture_Paint(object sender, PaintEventArgs e)
         {
+            DocumentOverlay.Draw(e.Graphics, picture.Size, document, CurrentPageNumber);
             foreach (var proof in proofs.Where(item => item.PageNumber == CurrentPageNumber && item.Id != selectedProofId))
             {
                 var bounds = new Rectangle((int)(proof.X * picture.Width), (int)(proof.Y * picture.Height),
@@ -431,7 +493,7 @@ namespace Doctracker.AddIn.UI
                 return;
             }
 
-            DrawHighlight(e.Graphics, rectangle, SnipTheme.ColorFor(selectionType), true);
+            DrawHighlight(e.Graphics, rectangle, CommentMode ? Color.Red : SnipTheme.ColorFor(selectionType), true);
         }
 
         private static void DrawHighlight(Graphics graphics, Rectangle bounds, Color color, bool selected)
@@ -453,7 +515,7 @@ namespace Doctracker.AddIn.UI
 
         private void RevealSelection()
         {
-            if (!normalizedSelection.HasValue || fitToViewport) return;
+            if (!normalizedSelection.HasValue || (fitToViewport && !fitWidth)) return;
             var zone = normalizedSelection.Value;
             var x = (int)((zone.X + zone.Width / 2) * picture.Width) + viewport.Padding.Left;
             var y = (int)((zone.Y + zone.Height / 2) * picture.Height) + viewport.Padding.Top;
@@ -508,7 +570,7 @@ namespace Doctracker.AddIn.UI
             pdf = null;
             currentPath = null;
             normalizedSelection = null;
-            selectedProofId = null; proofs.Clear();
+            selectedProofId = null; proofs.Clear(); document = null;
             pageIndex = 0;
             zoomLabel.Text = "100 %";
             pageLabel.Text = "Aucun document";
@@ -517,7 +579,7 @@ namespace Doctracker.AddIn.UI
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing) DisposeDocument();
+            if (disposing) { DisposeDocument(); popup.Dispose(); zoomMenu.Dispose(); }
             base.Dispose(disposing);
         }
     }

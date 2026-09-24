@@ -26,6 +26,13 @@ try {
     $bitmap.Save($imagePath)
     $font.Dispose(); $graphics.Dispose(); $bitmap.Dispose()
     $canvas.LoadDocument($imagePath)
+    # A tall page must fill the width instead of shrinking to the available height.
+    $tallPath=Join-Path $temp 'portrait.png'
+    $tall=[Drawing.Bitmap]::new(1200,3600);$tall.Save($tallPath);$tall.Dispose()
+    $canvas.LoadDocument($tallPath);$canvas.PerformLayout()
+    $tallPicture=$type.GetField('picture',$flags).GetValue($canvas)
+    if ($tallPicture.Width -lt 650 -or $tallPicture.Height -le 600) { throw 'Width fitting shrank a tall document to its height.' }
+    $canvas.LoadDocument($imagePath)
     $picture = $type.GetField('picture', $flags).GetValue($canvas)
     if ($picture.SizeMode -ne [Windows.Forms.PictureBoxSizeMode]::StretchImage) { throw 'Zoom does not scale the source image.' }
     $snip = New-Object Doctracker.Core.Models.SnipRecord
@@ -69,6 +76,12 @@ try {
             $viewCanvas=$viewType.GetField('Canvas', $flags).GetValue($view)
             $viewCanvas.LoadDocument($imagePath)
             $viewCanvas.NavigateTo($imagePath,$snip)
+            $annotationDocument=New-Object Doctracker.Core.Models.DocumentRecord
+            $annotationDocument.TestReference='DAC B 30 040';$annotationDocument.ReferenceNumber=1
+            $annotation=New-Object Doctracker.Core.Models.DocumentComment
+            $annotation.PageNumber=1;$annotation.X=.08;$annotation.Y=.68;$annotation.Width=.52;$annotation.Height=.25
+            $annotation.Text='Pièce contrôlée et rapprochée.';$annotationDocument.Comments.Add($annotation)
+            $viewCanvas.SetDocument($annotationDocument)
             $form.Show(); [Windows.Forms.Application]::DoEvents()
             if ($scenario.Scale -ne 1) {
                 # Simulate larger Windows text and geometry; actual Office per-monitor DPI remains a desktop check.
@@ -92,6 +105,9 @@ try {
                 if ($control.Height + 2 -lt $preferred.Height) { throw "Clipped $name at $($scenario.Width) / $($scenario.Scale): $($control.Height) < $($preferred.Height)" }
                 if ($control.Right -gt $control.Parent.ClientSize.Width + 2) { throw "Horizontal overflow: $name" }
             }
+            $beforeReading=$viewCanvas.Height;$view.SetReadingMode($true);$view.PerformLayout();[Windows.Forms.Application]::DoEvents()
+            if($viewCanvas.Height -le $beforeReading){throw 'Reading mode did not increase document area.'}
+            $view.SetReadingMode($false)
             if ($viewCanvas.Height -lt 160) { throw "Document area collapsed: $($viewCanvas.Height) at $($view.Width)x$($view.Height), scale $($scenario.Scale)" }
 
         } finally { $form.Dispose() }

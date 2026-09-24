@@ -24,6 +24,7 @@ namespace Doctracker.AddIn.UI
         private readonly WorkspaceView view;
         private bool bindingProofs;
         private string focusedSnipId;
+        private string lastImportedId;
         private readonly DocumentCanvas canvas;
         private readonly ComboBox documents;
         private TextBox searchBox;
@@ -71,6 +72,7 @@ namespace Doctracker.AddIn.UI
             status = view.Status;
             cancelButton = view.Cancel;
             canvas = view.Canvas;
+            WireAnnotationActions();
             documents.SelectedIndexChanged += Documents_SelectedIndexChanged;
             searchResults.SelectedIndexChanged += SearchResults_SelectedIndexChanged;
             view.Import.Click += (sender, args) => ImportDocuments();
@@ -142,6 +144,7 @@ namespace Doctracker.AddIn.UI
 
         public void SetSnipMode(SnipType? type)
         {
+            if(type.HasValue)view.SetReadingMode(false);
             activeSnipType = type;
             view.SetMode(type);
             Ribbon.DoctrackerRibbon.Instance?.Refresh();
@@ -169,33 +172,36 @@ namespace Doctracker.AddIn.UI
                 using (var dialog = new OpenFileDialog
                 {
                     Title = "Ajouter des pièces au dossier Doctracker",
-                    Filter = "Documents|*.pdf;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.bmp", Multiselect = true, CheckFileExists = true
+                    Filter = "Documents|*.pdf;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.bmp;*.doc;*.docx", Multiselect = true, CheckFileExists = true
                 })
                 {
                     if (dialog.ShowDialog() != DialogResult.OK) return;
                     BeginOperation();
-                    var errors = new List<string>();
+                    lastImportedId=null;var errors = new List<string>();
                     foreach (var path in dialog.FileNames)
                     {
                         operation.Token.ThrowIfCancellationRequested();
-                        try { await Task.Run(() => context.Importer.Import(context.State, path, Environment.UserName)); }
+                        try { SetStatus("Import : " + Path.GetFileName(path)); var imported=await Task.Run(() => WordDocumentImporter.Import(context,path,null,true,operation.Token));lastImportedId=imported.Id; }
+                        catch (OperationCanceledException) { throw; }
                         catch (Exception exception) { errors.Add(Path.GetFileName(path) + " : " + exception.Message); }
                     }
-                    RefreshCategories(); BindDocuments();
+                    RefreshCategories(); BindDocuments();SelectLastImported();
                     errors.AddRange(await IndexMissingAsync());
-                    BindDocuments();
+                    BindDocuments();SelectLastImported();
                     SetStatus(errors.Count == 0 ? "Pièces importées et prêtes pour la recherche." : "Import terminé avec " + errors.Count + " erreur(s).");
                     if (errors.Count > 0) MessageBox.Show(this, string.Join("\n", errors), "Pièces à vérifier");
                 }
             }
-            catch (OperationCanceledException) { SetStatus("Import interrompu. Les pièces déjà importées sont conservées."); }
+            catch (OperationCanceledException) { RefreshCategories();BindDocuments();SelectLastImported();SetStatus("Import interrompu. Les pièces déjà importées sont conservées."); }
             catch (Exception exception) { ShowError(exception); }
             finally { EndOperation(); }
         }
 
         private async void Canvas_SelectionCompleted(object sender, EventArgs e)
         {
-            if (!activeSnipType.HasValue || context.IsBusy) return;
+            if(context.IsBusy)return;
+            if(canvas.CommentMode){CreateDocumentComment();return;}
+            if (!activeSnipType.HasValue) return;
             await CaptureSnipAsync(activeSnipType.Value);
         }
 
@@ -545,6 +551,7 @@ namespace Doctracker.AddIn.UI
         private void UpdateDocumentProofs()
         {
             var document = SelectedDocument;
+            canvas.SetDocument(document);
             canvas.SetProofs(document == null ? Enumerable.Empty<SnipRecord>() : context.State.Snips.Where(snip => snip.DocumentId == document.Id));
         }
 
@@ -605,7 +612,7 @@ namespace Doctracker.AddIn.UI
 
         private void BindDocuments()
         {
-            var visible=VisibleDocuments().ToList();
+            var visible=VisibleDocuments().OrderByDescending(d=>d.LastImportedAtUtc==default(DateTime)?d.AddedAtUtc:d.LastImportedAtUtc).ToList();
             var selectedId = SelectedDocument?.Id;
             if(selectedId!=null && !visible.Any(d=>d.Id==selectedId))selectedId=null;
             var listChanged = documents.Items.Count != visible.Count ||
@@ -624,8 +631,10 @@ namespace Doctracker.AddIn.UI
             var indexed = context.State.Documents.Count(item => item.IndexComplete);
             ocrState.Text = total == 0
                 ? "Aucune pièce"
-                : total + " pièce(s) • " + indexed + " indexée(s) • " + (string.IsNullOrEmpty(context.State.SharedVaultPath)?"Intégrées à Excel":"Partagées");
+                : total + " pièces · " + indexed + " indexées";
         }
+
+        private void SelectLastImported() { if(lastImportedId!=null)SelectDocument(lastImportedId); }
 
         private void SelectDocument(string id)
         {

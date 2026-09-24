@@ -94,6 +94,17 @@ namespace Doctracker.AddIn.Excel
             target.Interior.Pattern = ExcelInterop.XlPattern.xlPatternNone;
         }
 
+        public void DetachProof(ExcelInterop.Range target, string id, ProjectState state)
+        {
+            var remaining=GetSnipIds(target).Where(value=>value!=id).ToList();
+            if(remaining.Count==0){RemoveProof(target);return;}
+            var text=target.Comment.Text() ?? "";
+            target.Comment.Text(string.Join("\n",Regex.Split(text,@"\r?\n").Where(line=>line.Trim()!=MarkerPrefix+id)));
+            var last=state.Snips.LastOrDefault(s=>remaining.Contains(s.Id));
+            var document=last==null?null:state.Documents.FirstOrDefault(d=>d.Id==last.DocumentId);
+            if(document!=null)AttachProof(target,last,document,true);
+        }
+
         public IReadOnlyList<string> GetSnipIds(ExcelInterop.Range target)
         {
             if (target == null || target.Cells.CountLarge != 1 || target.Comment == null) return new List<string>();

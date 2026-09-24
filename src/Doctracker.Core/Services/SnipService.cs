@@ -76,6 +76,22 @@ namespace Doctracker.Core.Services
             }
         }
 
+        public void Delete(ProjectState state, string snipId, string actor)
+        {
+            var snip = state.Snips.FirstOrDefault(item => item.Id == snipId);
+            if (snip == null) throw new InvalidOperationException("Snip introuvable.");
+            var position = state.Snips.IndexOf(snip);
+            var previousLinks = state.CellLinks;
+            var entry = new AuditEventRecord { Actor = actor ?? "", Action = "SnipDeleted", EntityType = "Snip", EntityId = snipId,
+                Details = snip.WorksheetName + "!" + snip.CellAddress };
+            state.Snips.RemoveAt(position);
+            state.CellLinks = previousLinks.Select(link => new CellLinkRecord { WorksheetName = link.WorksheetName,
+                CellAddress = link.CellAddress, SnipIds = link.SnipIds.Where(id => id != snipId).ToList() }).Where(link => link.SnipIds.Count > 0).ToList();
+            state.AuditTrail.Add(entry);
+            try { store.Save(state); }
+            catch { state.Snips.Insert(position, snip); state.CellLinks = previousLinks; state.AuditTrail.Remove(entry); throw; }
+        }
+
         public void SetReview(
             ProjectState state,
             string snipId,

@@ -13,6 +13,7 @@ internal static class ExportSmoke
         try
         {
             var document = new DocumentRecord { OriginalName = "native.pdf", TestReference = "DAC B 30 040", ReferenceNumber = 1 };
+            document.Comments.Add(new DocumentComment { PageNumber=1, X=.12, Y=.55, Width=.55, Height=.22, Text="Rapprochement validé — document reçu." });
             var snip = new SnipRecord {
                 PageNumber = 1, WorksheetName = "Achats", CellAddress = "B2",
                 X = double.Parse(args[2], CultureInfo.InvariantCulture),

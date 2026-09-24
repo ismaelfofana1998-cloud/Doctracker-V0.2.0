@@ -53,6 +53,7 @@ namespace Doctracker.AddIn.Infrastructure
             using(var graphics=Graphics.FromImage(bitmap))
             using(var font=new Font("Segoe UI",Math.Max(9,bitmap.Width/110f),FontStyle.Bold,GraphicsUnit.Pixel))
             {
+                DocumentOverlay.Draw(graphics, bitmap.Size, document, number);
                 foreach(var snip in snips.Where(s=>s.PageNumber==number))
                 {
                     var color=SnipTheme.ColorFor(snip.SourceType??snip.Type);

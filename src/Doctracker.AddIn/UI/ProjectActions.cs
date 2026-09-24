@@ -77,7 +77,7 @@ namespace Doctracker.AddIn.UI
                 {
                     if(picker.ShowDialog(this)!=DialogResult.OK)return;
                     var category=Prompt(this,"Importer un dossier","Catégorie principale (les sous-dossiers sont conservés)",Path.GetFileName(picker.SelectedPath));if(category==null)return;
-                    BeginOperation();var root=picker.SelectedPath;var errors=new List<string>();
+                    BeginOperation();lastImportedId=null;var root=picker.SelectedPath;var errors=new List<string>();
                     var count=await Task.Run(()=>
                     {
                         var imported=0;
@@ -85,17 +85,18 @@ namespace Doctracker.AddIn.UI
                         {
                             operation.Token.ThrowIfCancellationRequested();
                             var relative=Path.GetDirectoryName(file).Substring(root.TrimEnd(Path.DirectorySeparatorChar).Length).Trim(Path.DirectorySeparatorChar);
-                            try {var document=context.Importer.Import(context.State,file,Environment.UserName,string.IsNullOrWhiteSpace(relative)?category:category+" / "+relative.Replace(Path.DirectorySeparatorChar,'/'),false);DocumentImporter.AddCategory(document,category);imported++;}
+                            try {var document=WordDocumentImporter.Import(context,file,string.IsNullOrWhiteSpace(relative)?category:category+" / "+relative.Replace(Path.DirectorySeparatorChar,'/'),false,operation.Token);DocumentImporter.AddCategory(document,category);lastImportedId=document.Id;imported++;}
+                            catch(OperationCanceledException){throw;}
                             catch(Exception exception){errors.Add(Path.GetFileName(file)+" : "+exception.Message);}
                             if(imported%25==0){context.Store.Save(context.State);SetStatusThreadSafe(imported+" pièces importées…");}
                         }
                         context.Store.Save(context.State);return imported;
                     });
-                    RefreshCategories();BindDocuments();errors.AddRange(await IndexMissingAsync());BindDocuments();
+                    RefreshCategories();BindDocuments();SelectLastImported();errors.AddRange(await IndexMissingAsync());BindDocuments();SelectLastImported();
                     SetStatus(count+" pièces importées. "+errors.Count+" erreur(s).");if(errors.Count>0)MessageBox.Show(this,string.Join("\n",errors.Take(30)),"Import : pièces à vérifier");
                 }
             }
-            catch(OperationCanceledException){context.Store.Save(context.State);SetStatus("Import arrêté. Les pièces déjà importées sont conservées.");}
+            catch(OperationCanceledException){context.Store.Save(context.State);RefreshCategories();BindDocuments();SelectLastImported();SetStatus("Import arrêté. Les pièces déjà importées sont conservées.");}
             catch(Exception exception){ShowError(exception);}
             finally{EndOperation();}
         }
@@ -107,7 +108,7 @@ namespace Doctracker.AddIn.UI
                 var folder=queue.Pop();string[] files=null;
                 try{files=Directory.GetFiles(folder);foreach(var child in Directory.GetDirectories(folder))if((File.GetAttributes(child)&FileAttributes.ReparsePoint)==0)queue.Push(child);}
                 catch(Exception ex) when(ex is IOException||ex is UnauthorizedAccessException){errors.Add(folder+" : "+ex.Message);}
-                foreach(var file in files??new string[0])if(DocumentImporter.IsSupported(file))yield return file;
+                foreach(var file in files??new string[0])if(WordDocumentImporter.IsSupported(file))yield return file;
             }
         }
         private void AssignReference()
@@ -126,7 +127,7 @@ namespace Doctracker.AddIn.UI
                     var oldRef=doc.TestReference;var oldNumber=doc.ReferenceNumber;
                     CrossReferences.Assign(context.State,doc,reference,(int)list.SelectedItem);
                     try{context.Store.Save(context.State);}catch{doc.TestReference=oldRef;doc.ReferenceNumber=oldNumber;context.State.XrefReservations.RemoveAt(context.State.XrefReservations.Count-1);throw;}
-                    documents.Refresh();BindDocuments();context.MarkWorkbookDirty();SetStatus("Xref : "+doc.DisplayName+". Le nom de l'export reprend cette référence.");
+                    documents.Refresh();BindDocuments();UpdateDocumentProofs();canvas.NavigateTo(context.Store.ResolveDocumentPath(doc),1);context.MarkWorkbookDirty();SetStatus("Xref : "+doc.DisplayName+". Le nom de l'export reprend cette référence.");
                 }
             }
             catch(Exception exception){ShowError(exception);}
