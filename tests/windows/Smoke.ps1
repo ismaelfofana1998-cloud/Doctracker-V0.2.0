@@ -85,7 +85,7 @@ try {
             $picker=$header.GetControlFromPosition(1,0)
             $caption=$picker.GetControlFromPosition(0,0)
             if ($picker.Top -lt 0 -or $caption.Top -lt 0 -or $picker.Bottom -gt $header.ClientSize.Height) { throw 'Header caption or document picker clipped.' }
-            foreach ($name in @('Documents','Query','Search','ModeState','Status','IndexState','Proofs')) {
+            foreach ($name in @('Documents','Categories','PartialReferences','Query','Search','ModeState','Status','IndexState','Proofs')) {
                 $control=$viewType.GetField($name,$flags).GetValue($view)
                 if ($control -is [Windows.Forms.ComboBox] -and $control.ItemHeight -lt $control.Font.Height + 4) { throw "Native combo text clipped: $name" }
                 $preferred=$control.GetPreferredSize([Drawing.Size]::new($control.Width,0))
@@ -153,6 +153,7 @@ try {
     $arguments[0]=$pdfPath; $arguments[1]=$document.PSObject.BaseObject
     $arguments[2]=[Doctracker.Core.Models.SnipRecord[]]@($snip)
     $arguments[3]=$exportPath; $arguments[4]=[Threading.CancellationToken]::None
+    for ($argumentIndex=0; $argumentIndex -lt $arguments.Length; $argumentIndex++) { $arguments[$argumentIndex]=$arguments[$argumentIndex].PSObject.BaseObject }
     $exporterType.GetMethod('Export',[Reflection.BindingFlags]'Static,Public').Invoke($null,$arguments) | Out-Null
     $canvas.LoadDocument($exportPath)
     $picture=$type.GetField('picture',$flags).GetValue($canvas)

@@ -68,10 +68,10 @@ namespace Doctracker.AddIn.UI
             menu.Items.Add(ImportFolder);menu.Items.Add(Categorize);menu.Items.Add(CrossReference);
             menu.Items.Add(new ToolStripSeparator());menu.Items.Add(SharedStorage);menu.Items.Add(Backup);menu.Items.Add(Restore);menu.Items.Add(RepairLinks);menu.Items.Add(RecoveryFolder);menu.Items.Add(ExportPdf);
             menu.Items.Add(new ToolStripSeparator());menu.Items.Add(Reindex); menu.Items.Add(Remove); more.Click+=(s,e)=>menu.Show(more,new Point(0,more.Height));
-            tips.SetToolTip(more,"Réindexer ou retirer un document");
+            tips.SetToolTip(more,"Dossiers, catégories, Xref, partage, sauvegarde et export");
             IndexState.Margin=new Padding(8,10,0,0);
             actions.Controls.Add(Import);actions.Controls.Add(more);actions.Controls.Add(IndexState);Add(root,actions);
-            var filters=Row(65,35);filters.Padding=new Padding(10,0,10,5);filters.Controls.Add(Categories,0,0);filters.Controls.Add(PartialReferences,1,0);Add(root,filters);
+            var filters=Row(100,0);filters.ColumnStyles[1]=new ColumnStyle(SizeType.AutoSize);filters.Padding=new Padding(10,0,10,5);filters.Controls.Add(Categories,0,0);filters.Controls.Add(PartialReferences,1,0);Add(root,filters);
             Categories.Items.Add("Toutes les catégories");Categories.SelectedIndex=0;
             tips.SetToolTip(PartialReferences,"Cherche X300 dans 500X300Z35. Montants et dates restent exacts. Les ambiguïtés sont signalées.");
             var searchRow = Row(100,0);searchRow.ColumnStyles[1]=new ColumnStyle(SizeType.AutoSize);searchRow.Padding=new Padding(10,0,10,6);
