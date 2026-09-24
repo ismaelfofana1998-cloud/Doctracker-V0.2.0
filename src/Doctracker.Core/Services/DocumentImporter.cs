@@ -42,9 +42,12 @@ namespace Doctracker.Core.Services
                     Directory.CreateDirectory(Path.GetDirectoryName(existingPath));
                     File.Copy(sourcePath, existingPath, false);
                 }
+                var previousImport = duplicate.LastImportedAtUtc;
+                var previousCategories = duplicate.Categories.ToList();
                 duplicate.LastImportedAtUtc = DateTime.UtcNow;
                 AddCategory(duplicate, category);
-                if (persist) store.Save(state);
+                try { if (persist) store.Save(state); }
+                catch { duplicate.LastImportedAtUtc = previousImport; duplicate.Categories = previousCategories; throw; }
                 return duplicate;
             }
 

@@ -116,14 +116,6 @@ try {
             $view.ShowResults(0);$view.PerformLayout();[Windows.Forms.Application]::DoEvents()
             $emptyResults=$viewType.GetField('resultCount',$flags).GetValue($view)
             if(!$emptyResults.Visible -or $emptyResults.Text -notmatch 'Aucun résultat') { throw 'No visible empty-search feedback.' }
-            $beforeReading=$viewCanvas.Height;$view.SetReadingMode($true);$view.PerformLayout();[Windows.Forms.Application]::DoEvents()
-            if($viewCanvas.Height -le $beforeReading){throw 'Reading mode did not increase document area.'}
-            $viewCanvas.LoadDocument($tallPath);$viewCanvas.SetDocument($annotationDocument)
-            $view.PerformLayout();[Windows.Forms.Application]::DoEvents()
-            $readingPreview=[Drawing.Bitmap]::new($view.Width,$view.Height)
-            $view.DrawToBitmap($readingPreview,[Drawing.Rectangle]::new(0,0,$view.Width,$view.Height))
-            $readingPreview.Save((Join-Path $previewDirectory ("reading-"+$scenario.Width+"-"+$scenario.Scale+".png")));$readingPreview.Dispose()
-            $view.SetReadingMode($false)
             if ($viewCanvas.Height -lt 160) { throw "Document area collapsed: $($viewCanvas.Height) at $($view.Width)x$($view.Height), scale $($scenario.Scale)" }
 
         } finally { $form.Dispose() }
@@ -237,10 +229,26 @@ try {
     $freshStore=New-Object Doctracker.Core.Services.ProjectStore $store.ProjectDirectory
     $freshState=$freshStore.LoadOrCreate('')
     $freshIndexer=$constructor.Invoke([object[]]@($freshStore.PSObject.BaseObject,$ocr.PSObject.BaseObject))
-    $indexErrors=$freshIndexer.IndexMissing($freshState,$null,[Threading.CancellationToken]::None)
+    $indexErrors=$freshIndexer.IndexMissing($freshState,$null,[Threading.CancellationToken]::None,$null,$true,$false)
     if($indexErrors.Count -ne 0 -or !$freshState.Documents[0].IndexComplete) { throw 'Damaged index did not rebuild from its source.' }
     $occurrences=[Doctracker.Core.Services.OccurrenceSearch]::Find($freshState,'001',10,[Threading.CancellationToken]::None)
     if($occurrences.Count -lt 1) { throw 'Search after automatic index recovery failed.' }
+    # Failed files outside the active folder must not block search or trigger more disk writes.
+    $badDoc=New-Object Doctracker.Core.Models.DocumentRecord
+    $badDoc.RelativePath='documents/missing.pdf';$badDoc.OriginalName='missing.pdf';$badDoc.IndexError='Previous import failed'
+    $freshState.Documents.Add($badDoc)
+    $revisionBefore=$freshState.Revision
+    $activeScope=[Collections.Generic.List[Doctracker.Core.Models.DocumentRecord]]::new()
+    $activeScope.Add($freshState.Documents[0])
+    $scopeErrors=$freshIndexer.IndexMissing($freshState,$null,[Threading.CancellationToken]::None,$activeScope,$false,$false)
+    if($scopeErrors.Count -ne 0){throw 'Out-of-scope failed document blocked active folder.'}
+    $knownErrors=$freshIndexer.IndexMissing($freshState,$null,[Threading.CancellationToken]::None,$null,$false,$false)
+    if($knownErrors.Count -ne 1 -or $freshState.Revision -ne $revisionBefore){throw 'Known failed document was retried or caused an unnecessary save.'}
+    # Cancellation before forced reindexing preserves the existing usable index.
+    try { $freshIndexer.IndexMissing($freshState,$null,[Threading.CancellationToken]::new($true),$activeScope,$true,$true);throw 'Cancellation ignored' }
+    catch { if($_.Exception.ToString() -notmatch 'OperationCanceledException'){throw} }
+    if(!$freshState.Documents[0].IndexComplete){throw 'Cancelled reindex invalidated previous index.'}
+    Write-Host 'PASS: folder-scoped indexing, no repeated failed imports, cancellation preserves previous index'
     Write-Host 'PASS: damaged XML/GZip index rebuilt; occurrence search works after reopening'
     Write-Host 'PASS: PDFium deployment, landscape rendering, native PDF text and positional matching'
     # Windows PowerShell does not apply the add-in's .dll.config redirects.

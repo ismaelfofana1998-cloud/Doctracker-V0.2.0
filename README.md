@@ -1,11 +1,11 @@
-# Doctracker 0.8.0 — complément Excel Windows
+# Doctracker 0.8.1 — complément Excel Windows
 
 Doctracker importe des PDF, images et fichiers Word (via Word installé), les classe par catégories et intègre les pièces
 au classeur Excel, ou les référence dans un emplacement réseau partagé. Il permet
 de sélectionner des zones, extraire leur contenu dans Excel, associer plusieurs
 preuves à une cellule et revenir à la source pour la revue.
 
-Voir [les corrections 0.8 : recherche, dossiers et manipulation directe](docs/CORRECTIONS_0.8.md), [les améliorations 0.7 : espace, recherche et annotations](docs/ERGONOMIE_0.7.md), [les ajouts 0.6 : édition, Word et lecture](docs/EDITION_0.6.md) et [le guide 0.5 : partage, catégories, Xref et récupération](docs/PORTABILITE_0.5.md).
+Voir [la stabilisation 0.8.1](docs/STABILISATION_0.8.1.md), [les corrections 0.8 : recherche, dossiers et manipulation directe](docs/CORRECTIONS_0.8.md), [les améliorations 0.7 : espace, recherche et annotations](docs/ERGONOMIE_0.7.md), [les ajouts 0.6 : édition, Word et lecture](docs/EDITION_0.6.md) et [le guide 0.5 : partage, catégories, Xref et récupération](docs/PORTABILITE_0.5.md).
 
 ## Installer et utiliser
 

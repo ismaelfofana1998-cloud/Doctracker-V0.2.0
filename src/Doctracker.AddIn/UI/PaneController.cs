@@ -17,9 +17,9 @@ namespace Doctracker.AddIn.UI
         private readonly Dictionary<ExcelInterop.Workbook, WorkbookProjectContext> contexts = new Dictionary<ExcelInterop.Workbook, WorkbookProjectContext>();
         public PaneController(ThisAddIn addIn, ExcelInterop.Application application) { this.addIn = addIn; this.application = application; }
 
-        private WindowPane Current()
+        private WindowPane Current(bool cleanup = true)
         {
-            CleanupClosedWindows();
+            if (cleanup) CleanupClosedWindows();
             var workbook = application.ActiveWorkbook;
             var window = application.ActiveWindow;
             if (workbook == null || window == null) throw new InvalidOperationException("Ouvrez un classeur Excel.");
@@ -92,7 +92,7 @@ namespace Doctracker.AddIn.UI
                     if (window != null && panes.TryGetValue(window.Hwnd, out existing)) existing.Control.ClearCellProof();
                     return;
                 }
-                var entry = Current();
+                var entry = Current(false);
                 if (entry.Control.TryNavigateFromCell(target)) entry.Pane.Visible = true;
             }
             catch (System.Runtime.InteropServices.COMException) { /* Excel can be editing or closing. */ }

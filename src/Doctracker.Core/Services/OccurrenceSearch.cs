@@ -21,6 +21,7 @@ namespace Doctracker.Core.Services
             {
                 try
                 {
+                    cancellation.ThrowIfCancellationRequested();
                     foreach(var page in doc.IndexedPages)
                     {
                         cancellation.ThrowIfCancellationRequested();var before=result.Count;

@@ -55,10 +55,13 @@ namespace Doctracker.Core.Services
             ProjectState state;
             using(var input=new MemoryStream(Unpack(current.Metadata))) state=ProjectStore.ReadMetadata(input);
             ProjectStore.AtomicWrite(store.MetadataPath,ProjectStore.MetadataBytes(state));
-            foreach(var file in current.Files.Where(f=>f.Path.StartsWith("indexes/",StringComparison.Ordinal))) Extract(file,store.ProjectDirectory);
+            var files = current.Files.ToDictionary(f => f.Path, StringComparer.Ordinal);
+            store.IndexResolver = key => {
+                if (files.TryGetValue("indexes/" + key + ".xml.gz", out var file)) Extract(file, store.ProjectDirectory);
+            };
             // PDFs/images are materialized only when requested by the viewer, OCR or export.
             store.DocumentResolver = document => {
-                var file=current.Files.FirstOrDefault(f=>f.Path==document.RelativePath.Replace('\\','/'));
+                files.TryGetValue(document.RelativePath.Replace('\\','/'), out var file);
                 if(file!=null) Extract(file,store.ProjectDirectory);
             };
             return store.LoadOrCreate(state.WorkbookPath);
@@ -74,8 +77,14 @@ namespace Doctracker.Core.Services
                 foreach(var doc in state.Documents) inputs.Add(Tuple.Create(doc.RelativePath.Replace('\\','/'),unchanged(doc.RelativePath.Replace('\\','/'),doc.Sha256)!=null ? store.LocalDocumentPath(doc) : store.ResolveDocumentPath(doc),doc.Sha256));
             foreach(var doc in state.Documents.Where(d=>!string.IsNullOrEmpty(d.IndexKey)))
             {
-                var path=store.IndexPath(doc.IndexKey);
-                if(File.Exists(path)) inputs.Add(Tuple.Create("indexes/"+doc.IndexKey+".xml.gz",path,DocumentImporter.ComputeSha256(path)));
+                var relative = "indexes/" + doc.IndexKey + ".xml.gz";
+                if (previous.TryGetValue(relative, out var existingIndex))
+                    inputs.Add(Tuple.Create(relative, store.IndexPath(doc.IndexKey), existingIndex.Hash));
+                else
+                {
+                    var path = store.ResolveIndexPath(doc.IndexKey);
+                    if (File.Exists(path)) inputs.Add(Tuple.Create(relative, path, DocumentImporter.ComputeSha256(path)));
+                }
             }
             if(inputs.Sum(x=>unchanged(x.Item1,x.Item3)?.Length ?? new FileInfo(x.Item2).Length)>MaximumEmbeddedBytes) throw new IOException("Les pièces dépassent 256 Mo. Activez le mode Documents partagés pour garder le classeur léger, ou réduisez le dossier.");
             var next=new PortableManifest {Generation=(current?.Generation??0)+1,Metadata=Pack(ProjectStore.MetadataBytes(state))};
@@ -100,10 +109,15 @@ namespace Doctracker.Core.Services
             }
             catch { foreach(var id in added) try {parts.Delete(id);} catch {} throw; }
             // New manifest is complete before removing anything used by the previous version.
-            var oldId=currentId;currentId=manifestId;current=next;
-            if(oldId!=null) parts.Delete(oldId);
-            var used=new HashSet<string>(next.Files.SelectMany(f=>f.Parts));
-            foreach(var id in parts.Ids(BlobNamespace).Where(id=>!used.Contains(id)).ToList()) parts.Delete(id);
+            currentId=manifestId;current=next;
+            try
+            {
+                // Remove all obsolete manifests first. If cleanup fails, keep their blobs too.
+                foreach (var id in parts.Ids(ManifestNamespace).Where(id => id != manifestId).ToList()) parts.Delete(id);
+                var used=new HashSet<string>(next.Files.SelectMany(f=>f.Parts));
+                foreach(var id in parts.Ids(BlobNamespace).Where(id=>!used.Contains(id)).ToList()) parts.Delete(id);
+            }
+            catch (Exception failure) { System.Diagnostics.Trace.WriteLine("Doctracker attachment cleanup deferred: " + failure); }
         }
         private void Extract(PortableFile file,string root)
         {

@@ -20,6 +20,7 @@ namespace Doctracker.Core.Services
         private static readonly XmlSerializer indexSerializer = new XmlSerializer(typeof(List<PageTextRecord>));
         public event Action Saved;
         public Action<DocumentRecord> DocumentResolver { get; set; }
+        public Action<string> IndexResolver { get; set; }
         public string RecoveryNotice { get; private set; }
         public string SharedVaultPath { get; set; }
         public ProjectStore(string projectDirectory)
@@ -88,22 +89,41 @@ namespace Doctracker.Core.Services
             lock (sync)
             {
                 Directory.CreateDirectory(DocumentsDirectory);
-                foreach (var document in state.Documents)
+                var staged = new List<Tuple<DocumentRecord, string, string>>();
+                var revision = state.Revision;
+                var updated = state.UpdatedAtUtc;
+                try
                 {
-                    if (document.IndexDirty || (string.IsNullOrEmpty(document.IndexKey) && document.IndexedPages.Count > 0))
+                    foreach (var document in state.Documents)
                     {
+                        if (!document.IndexDirty && !(string.IsNullOrEmpty(document.IndexKey) && document.IndexedPages.Count > 0)) continue;
                         var key = Guid.NewGuid().ToString("N");
                         var path = IndexPath(key); Directory.CreateDirectory(Path.GetDirectoryName(path));
+                        staged.Add(Tuple.Create(document, document.IndexKey, key));
                         using (var stream = File.Create(path))
                         using (var zip = new GZipStream(stream, CompressionMode.Compress))
                         using (var xml = new SafeXmlWriter(XmlWriter.Create(zip,new XmlWriterSettings {Encoding=new UTF8Encoding(false)}))) indexSerializer.Serialize(xml, document.IndexedPages);
-                        document.IndexKey = key; document.MarkIndexSaved();validatedIndexes[key]=IndexStamp(path);
+                        document.IndexKey = key;
                     }
-                    ConfigureIndex(document);
+                    state.UpdatedAtUtc = DateTime.UtcNow; state.Revision = Guid.NewGuid().ToString("N");
+                    AtomicWrite(MetadataPath, MetadataBytes(state));
                 }
-                var revision = state.Revision; state.UpdatedAtUtc = DateTime.UtcNow; state.Revision = Guid.NewGuid().ToString("N");
-                try { AtomicWrite(MetadataPath, MetadataBytes(state)); }
-                catch { state.Revision = revision; throw; }
+                catch
+                {
+                    state.Revision = revision; state.UpdatedAtUtc = updated;
+                    foreach (var change in staged)
+                    {
+                        change.Item1.IndexKey = change.Item2;
+                        try { File.Delete(IndexPath(change.Item3)); } catch (IOException) {} catch (UnauthorizedAccessException) {}
+                    }
+                    throw;
+                }
+                // Only acknowledge index changes after the metadata commit succeeds.
+                foreach (var change in staged)
+                {
+                    change.Item1.MarkIndexSaved(); ConfigureIndex(change.Item1);
+                    validatedIndexes[change.Item3] = IndexStamp(IndexPath(change.Item3));
+                }
                 SharedVaultPath = state.SharedVaultPath;
                 // Append-only metadata checkpoints; originals/indices are immutable and shared.
                 var recovery = Path.Combine(ProjectDirectory, "recovery");
@@ -114,7 +134,9 @@ namespace Doctracker.Core.Services
                     foreach (var old in Directory.GetFiles(recovery, "*.xml").OrderByDescending(x => x).Skip(20)) File.Delete(old);
                 }
                 catch (Exception failure) when (failure is IOException || failure is UnauthorizedAccessException) { /* project.xml and its previous version are already durable */ }
-                Saved?.Invoke();
+                // Observers cannot turn a durable commit into a reported failure and trigger a false rollback.
+                if (Saved != null) foreach (Action observer in Saved.GetInvocationList())
+                    try { observer(); } catch (Exception failure) { System.Diagnostics.Trace.WriteLine("Doctracker save observer: " + failure); }
             }
         }
         private void ConfigureIndex(DocumentRecord document)
@@ -122,7 +144,7 @@ namespace Doctracker.Core.Services
             if (string.IsNullOrEmpty(document.IndexKey)) return;
             document.PageLoader = () =>
             {
-                var path = IndexPath(document.IndexKey);
+                var path = ResolveIndexPath(document.IndexKey);
                 if (!File.Exists(path)) { document.IndexComplete = false; return new List<PageTextRecord>(); }
                 using (var stream = File.OpenRead(path))
                 using (var zip = new GZipStream(stream, CompressionMode.Decompress))
@@ -137,7 +159,7 @@ namespace Doctracker.Core.Services
                     validatedIndexes[document.IndexKey]=IndexStamp(path);return pages;
                 }
             };
-            if (!File.Exists(IndexPath(document.IndexKey))) document.IndexComplete = false;
+            if (IndexResolver == null && !File.Exists(IndexPath(document.IndexKey))) document.IndexComplete = false;
         }
         private static string IndexStamp(string path)
         {var info=new FileInfo(path);return info.Exists?info.Length+"|"+info.LastWriteTimeUtc.Ticks:null;}
@@ -157,6 +179,12 @@ namespace Doctracker.Core.Services
                 return false;
             }
             finally{document.ReleaseIndex();}
+        }
+        public string ResolveIndexPath(string key)
+        {
+            var path = IndexPath(key);
+            if (!File.Exists(path)) IndexResolver?.Invoke(key);
+            return path;
         }
         public string IndexPath(string key)
         {

@@ -90,22 +90,25 @@ namespace Doctracker.AddIn.Infrastructure
             }
         }
 
-        public List<string> IndexMissing(ProjectState state, Action<string, int, int> progress, CancellationToken cancellation)
+        public List<string> IndexMissing(ProjectState state, Action<string, int, int> progress, CancellationToken cancellation, IEnumerable<DocumentRecord> scope = null, bool retryFailed = true, bool forceReindex = false)
         {
             var errors = new List<string>();
-            foreach (var document in state.Documents.ToList())
+            var changed = false;
+            foreach (var document in (scope ?? state.Documents).ToList())
             {
                 cancellation.ThrowIfCancellationRequested();
-                if(store.ValidateIndex(document))continue;
+                if (!retryFailed && !string.IsNullOrEmpty(document.IndexError))
+                { errors.Add(document.OriginalName + " : " + document.IndexError); continue; }
+                if(!forceReindex && store.ValidateIndex(document))continue;
                 try { Index(state, document, (page, count) => progress?.Invoke(document.OriginalName, page, count), cancellation); }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception exception)
                 {
-                    document.IndexError = exception.Message;
+                    document.IndexError = exception.Message; changed = true;
                     errors.Add(document.OriginalName + " : " + exception.Message);
                 }
             }
-            if (errors.Count > 0) store.Save(state);
+            if (changed) store.Save(state);
             return errors;
         }
 

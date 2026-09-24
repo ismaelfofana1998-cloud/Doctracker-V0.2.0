@@ -17,36 +17,15 @@ namespace Doctracker.AddIn.UI
         public readonly Label IndexState = Label("Aucune pièce");
         public readonly Label ModeState = Label("Choisissez un snip, puis dessinez une zone.");
         public readonly Label Status = Label("Prêt · Cliquez sur une cellule liée pour afficher sa preuve.");
-        public readonly Button Import = SnipTheme.Button("Importer", "ImportDocuments");
         public readonly Button Search = SnipTheme.Button("Rechercher", "SearchDocuments");
-        public readonly Button Comment = SnipTheme.Button("Commenter", "Comment", Color.Red);
         public readonly Button DeleteSnip = SnipTheme.Button("", "Delete", Color.Red);
-        public readonly Button Reading = SnipTheme.Button("Lecture", "Fit");
-        public readonly ToolStripMenuItem DeleteSnipMenu = new ToolStripMenuItem("Supprimer le snip sélectionné…");
         public readonly Button Cancel = SnipTheme.Button("Annuler");
-        public readonly ToolStripMenuItem Reindex = new ToolStripMenuItem("Réindexer les documents");
-        public readonly ToolStripMenuItem Remove = new ToolStripMenuItem("Retirer le document sélectionné");
-        public readonly ToolStripMenuItem ImportFolder = new ToolStripMenuItem("Importer un dossier et ses sous-dossiers…");
-        public readonly ToolStripMenuItem Categorize = new ToolStripMenuItem("Classer les documents…");
-        public readonly ToolStripMenuItem CrossReference = new ToolStripMenuItem("Attribuer une Xref…");
-        public readonly ToolStripMenuItem SharedStorage = new ToolStripMenuItem("Stockage autonome / partagé…");
-        public readonly ToolStripMenuItem Backup = new ToolStripMenuItem("Sauvegarder toutes les pièces et liens…");
-        public readonly ToolStripMenuItem Restore = new ToolStripMenuItem("Restaurer une sauvegarde…");
-        public readonly ToolStripMenuItem RepairLinks = new ToolStripMenuItem("Réparer les liens des cellules…");
-        public readonly ToolStripMenuItem RecoveryFolder = new ToolStripMenuItem("Ouvrir les sauvegardes automatiques");
-        public readonly ToolStripMenuItem ExportPdf = new ToolStripMenuItem("Exporter le dossier en PDF annotés…");
         public readonly ComboBox Categories = new EvidenceComboBox { DropDownStyle=ComboBoxStyle.DropDownList, Dock=DockStyle.Fill, FlatStyle=FlatStyle.Flat, AccessibleName="Dossier de documents" };
         public readonly DocumentCanvas Canvas = new DocumentCanvas();
         private readonly TableLayoutPanel resultsPanel;
         private readonly TableLayoutPanel proofPanel;
-        private readonly List<Control> secondary = new List<Control>();
-        private bool readingMode;
-        private bool resultsBeforeReading;
-        private bool commentMode;
         private readonly Label resultCount = Label("");
-        private readonly ContextMenuStrip menu = new ContextMenuStrip();
         private readonly ToolTip tips = new ToolTip();
-        private SnipType? activeMode;
         private int resultTotal;
 
         public WorkspaceView()
@@ -72,12 +51,9 @@ namespace Doctracker.AddIn.UI
                 var longest=Documents.Items.Cast<object>().Select(item=>Documents.GetItemText(item)).Aggregate("",(a,b)=>b.Length>a.Length?b:a);
                 Documents.DropDownWidth=Math.Max(Documents.Width,Math.Min(900,TextRenderer.MeasureText(longest,Documents.Font).Width+40));
             };
-            // Ribbon command items own the action events; no duplicated toolbar in the pane.
-            menu.Items.Add(DeleteSnipMenu);menu.Items.Add(ImportFolder);menu.Items.Add(Categorize);menu.Items.Add(CrossReference);
-            menu.Items.Add(SharedStorage);menu.Items.Add(Backup);menu.Items.Add(Restore);menu.Items.Add(RepairLinks);menu.Items.Add(RecoveryFolder);menu.Items.Add(ExportPdf);menu.Items.Add(Reindex);menu.Items.Add(Remove);
             var filters=Row(65,35);filters.Padding=new Padding(8,2,8,4);
             filters.Controls.Add(Categories,0,0);filters.Controls.Add(IndexState,1,0);IndexState.Anchor=AnchorStyles.Left;IndexState.Dock=DockStyle.None;
-            Add(root,filters);secondary.Add(filters);
+            Add(root,filters);
             Categories.Items.Add("Tous les documents");Categories.SelectedIndex=0;
             tips.SetToolTip(Categories,"Dossier actif : il limite la recherche et l'export");
             DeleteSnip.AccessibleName="Supprimer le snip sélectionné";
@@ -104,32 +80,22 @@ namespace Doctracker.AddIn.UI
         }
         public void SetMode(SnipType? type)
         {
-            activeMode=type;commentMode=false;Canvas.CommentMode=false;Comment.BackColor=Color.White;Canvas.ActiveType=type;
-            ModeState.Visible=type.HasValue && !readingMode;
+            Canvas.CommentMode=false;Canvas.ActiveType=type;
+            ModeState.Visible=type.HasValue;
             ModeState.Text=type.HasValue ? SnipTheme.LabelFor(type.Value)+" · Dessinez une zone. Le mode reste actif." : "Choisissez un snip, puis dessinez une zone.";
             ModeState.ForeColor=type.HasValue?SnipTheme.ColorFor(type.Value):SnipTheme.Muted;
         }
         public void SetCommentMode(bool active)
         {
-            SetMode(null);commentMode=active;Canvas.CommentMode=active;
-            Comment.BackColor=active ? Color.MistyRose : Color.White;
+            SetMode(null);Canvas.CommentMode=active;
             ModeState.Text="Commentaire · Dessinez une zone puis saisissez le texte.";ModeState.ForeColor=Color.Red;
-            ModeState.Visible=active && !readingMode;
+            ModeState.Visible=active;
         }
-        public void SetReadingMode(bool enabled)
-        {
-            if(enabled && !readingMode)resultsBeforeReading=resultsPanel.Visible;
-            if(!enabled && readingMode)resultsPanel.Visible=resultsBeforeReading;
-            readingMode=enabled;foreach(var control in secondary)control.Visible=!enabled;
-            if(enabled)resultsPanel.Visible=false;
-            ModeState.Visible=!enabled && (activeMode.HasValue || commentMode);
-            Reading.Text=enabled ? "Outils" : "Lecture";PerformLayout();
-        }
-        public void ShowResults(int count) { SetReadingMode(false); resultTotal=count;resultCount.Text=count==0 ? "Aucun résultat · Vérifiez le dossier ou réindexez le document." : count+" résultat(s)";SizeResults();resultsPanel.Visible=true; }
+        public void ShowResults(int count) { resultTotal=count;resultCount.Text=count==0 ? "Aucun résultat · Vérifiez le dossier ou réindexez le document." : count+" résultat(s)";SizeResults();resultsPanel.Visible=true; }
         private void SizeResults() { Results.Visible=resultTotal>0;resultsPanel.RowStyles[1].Height=resultTotal==0 ? 0 : Math.Min(3,resultTotal)*Results.ItemHeight+8; resultCount.MaximumSize=new Size(Math.Max(100,Width-120),0); }
         public void HideResults() { resultsPanel.Visible=false; }
         public void ShowProofs(bool visible) { proofPanel.Visible=visible; }
-        public void SetBusy(bool busy) { Documents.Enabled=Query.Enabled=Import.Enabled=Search.Enabled=Proofs.Enabled=Categories.Enabled=Comment.Enabled=DeleteSnip.Enabled=!busy;Cancel.Visible=busy; }
+        public void SetBusy(bool busy) { Documents.Enabled=Query.Enabled=Search.Enabled=Proofs.Enabled=Categories.Enabled=DeleteSnip.Enabled=!busy;Cancel.Visible=busy; }
         private static Label Label(string text) => new Label {Text=text,AutoSize=true,Dock=DockStyle.Fill,ForeColor=SnipTheme.Muted,Margin=Padding.Empty,Padding=new Padding(0,3,0,3)};
         private static TableLayoutPanel Rows()
         {
@@ -142,7 +108,7 @@ namespace Doctracker.AddIn.UI
         }
         private static void Add(TableLayoutPanel table, Control control, SizeType sizing=SizeType.AutoSize,float height=0)
         { var row=table.RowCount++;table.RowStyles.Add(new RowStyle(sizing,height));table.Controls.Add(control,0,row); }
-        protected override void Dispose(bool disposing) { if(disposing){menu.Dispose();tips.Dispose();Import.Dispose();Comment.Dispose();Reading.Dispose();}base.Dispose(disposing); }
+        protected override void Dispose(bool disposing) { if(disposing){tips.Dispose();}base.Dispose(disposing); }
     }
     internal sealed class EvidenceComboBox : ComboBox
     {

@@ -36,7 +36,8 @@ namespace Doctracker.AddIn.UI
         private SnipType? activeSnipType;
         private readonly ExcelInterop.Workbook workbook;
         private CancellationTokenSource operation;
-        private string boundProjectPath;
+        private ProjectState boundProject;
+        private string renderedRevision;
         private readonly Button cancelButton;
         private string matchingInputSheet;
         private string matchingInputAddress;
@@ -75,7 +76,6 @@ namespace Doctracker.AddIn.UI
             WireAnnotationActions();
             documents.SelectedIndexChanged += Documents_SelectedIndexChanged;
             searchResults.SelectedIndexChanged += SearchResults_SelectedIndexChanged;
-            view.Import.Click += (sender, args) => ImportDocuments();
             view.Search.Click += (sender, args) => SearchFromPane();
             searchBox.KeyDown += (sender, args) => {
                 if (args.KeyCode == Keys.Enter) { args.SuppressKeyPress = true; SearchFromPane(); }
@@ -90,15 +90,16 @@ namespace Doctracker.AddIn.UI
             };
             canvas.SelectionCompleted += Canvas_SelectionCompleted;
             cancelButton.Click += (sender, args) => operation?.Cancel();
-            var reindexButton = view.Reindex;
-            reindexButton.Click += async (sender, args) =>
-            {
+            context.BusyChanged += SetBusy;
+        }
+
+        private async void ReindexDocumentsAsync()
+        {
                 if (context.IsBusy) return;
                 try
                 {
                     EnsureProject(); BeginOperation();
-                    foreach (var document in context.State.Documents) document.IndexComplete = false;
-                    var errors = await IndexMissingAsync();
+                    var errors = await IndexMissingAsync(VisibleDocuments().ToList(), true, true);
                     BindDocuments();
                     SetStatus(errors.Count == 0 ? "Index mis à jour." : errors.Count + " pièce(s) à vérifier.");
                     if (errors.Count > 0) MessageBox.Show(this, string.Join("\n", errors), "Indexation");
@@ -106,11 +107,10 @@ namespace Doctracker.AddIn.UI
                 catch (OperationCanceledException) { SetStatus("Réindexation annulée."); }
                 catch (Exception exception) { ShowError(exception); }
                 finally { EndOperation(); }
-            };
+        }
 
-            var removeButton = view.Remove;
-            removeButton.Click += (sender, args) =>
-            {
+        private void RemoveDocument()
+        {
                 if (context.IsBusy) return;
                 try
                 {
@@ -130,20 +130,24 @@ namespace Doctracker.AddIn.UI
                     SetStatus("Pièce retirée de la liste. Sa copie locale est conservée pour récupération.");
                 }
                 catch (Exception exception) { ShowError(exception); }
-            };
-
         }
 
         public void RefreshProject()
         {
             if (context.IsBusy || IsDisposed) return;
-            try { EnsureProject(); RefreshCategories(); BindDocuments(); if(context.Store.RecoveryNotice!=null)SetStatus(context.Store.RecoveryNotice); }
+            try {
+                EnsureProject();
+                if (renderedRevision == context.State.Revision) return;
+                RefreshCategories(); BindDocuments(); UpdateDocumentProofs();
+                renderedRevision = context.State.Revision;
+                if(context.Store.RecoveryNotice!=null)SetStatus(context.Store.RecoveryNotice);
+            }
             catch (Exception exception) { SetStatus(exception.Message); }
         }
 
         public void SetSnipMode(SnipType? type)
         {
-            if(type.HasValue)view.SetReadingMode(false);
+            if (context.IsBusy) return;
             activeSnipType = type;
             view.SetMode(type);
             Ribbon.DoctrackerRibbon.Instance?.Refresh();
@@ -324,8 +328,10 @@ namespace Doctracker.AddIn.UI
                 EnsureProject();
                 if (string.IsNullOrWhiteSpace(query)) throw new InvalidOperationException("Saisissez un texte à rechercher.");
                 BeginOperation();
-                var errors = await IndexMissingAsync();
-                var scope=SearchScope();scope.Documents=scope.Documents.Where(d=>d.IndexComplete).ToList();
+                searchResults.DataSource = null; view.HideResults();
+                var scope=SearchScope();
+                var errors = await IndexMissingAsync(scope.Documents, false);
+                scope.Documents=scope.Documents.Where(d=>d.IndexComplete && string.IsNullOrEmpty(d.IndexError)).ToList();
                 var results = await Task.Run(() => OccurrenceSearch.Find(scope, query, 201, operation.Token)
                     .Select(candidate => new SearchResultItem { Candidate = candidate,
                         Document = context.State.Documents.First(item => item.Id == candidate.DocumentId) }).ToList());
@@ -402,7 +408,7 @@ namespace Doctracker.AddIn.UI
                 for (var row = 1; row <= rowCount; row++)
                     queries.Add(Enumerable.Range(1, columnCount).Select(column => ExcelCellGateway.QueryText((ExcelInterop.Range)input.Cells[row, column])).ToArray());
                 BeginOperation();
-                var errors = await IndexMissingAsync();
+                var errors = await IndexMissingAsync(VisibleDocuments().ToList(), false);
                 if (errors.Count > 0) throw new InvalidOperationException("Matching interrompu : certaines pièces ne sont pas indexées.\n" + string.Join("\n", errors));
                 var scope=SearchScope();scope.Documents=scope.Documents.Where(d=>d.IndexComplete).ToList();
                 var results = await Task.Run(() => context.Matcher.FindBatch(scope,queries.Select(q=>(IReadOnlyList<string>)q).ToList(),true,operation.Token));
@@ -540,7 +546,6 @@ namespace Doctracker.AddIn.UI
             var document = context.State.Documents.FirstOrDefault(item => item.Id == snip.DocumentId);
             if (document == null) return false;
 
-            BindDocuments();
             SelectDocument(document.Id);
             UpdateDocumentProofs();
             canvas.NavigateTo(context.Store.ResolveDocumentPath(document), snip);
@@ -600,9 +605,10 @@ namespace Doctracker.AddIn.UI
         {
             EnsureActiveWorkbook();
             context.Ensure(workbook);
-            if (boundProjectPath != context.WorkbookPath)
+            if (!ReferenceEquals(boundProject, context.State))
             {
-                boundProjectPath = context.WorkbookPath;
+                boundProject = context.State;
+                RefreshCategories();
                 matchingInputSheet = matchingInputAddress = matchingOutputSheet = matchingOutputAddress = null;
                 searchResults.DataSource = null;
                 view.HideResults(); view.ShowProofs(false); focusedSnipId = null;
@@ -711,8 +717,7 @@ namespace Doctracker.AddIn.UI
             if (context.IsBusy) throw new InvalidOperationException("Une opération est déjà en cours dans ce classeur.");
             context.IsBusy = true;
             operation = new CancellationTokenSource();
-            canvas.Enabled = documents.Enabled = searchResults.Enabled = false;
-            view.SetBusy(true);
+            SetBusy(true);
         }
 
         private void EndOperation()
@@ -720,17 +725,24 @@ namespace Doctracker.AddIn.UI
             if (operation == null) return;
             operation.Dispose(); operation = null; context.IsBusy = false;
             if (IsDisposed) return;
-            canvas.Enabled = documents.Enabled = searchResults.Enabled = true;
-            view.SetBusy(false);
-            context.MarkWorkbookDirty();
+            try { context.MarkWorkbookDirty(); }
+            catch (System.Runtime.InteropServices.COMException exception) { SetStatus("Enregistrez le classeur : " + exception.Message); }
         }
 
-        private Task<List<string>> IndexMissingAsync()
+        private void SetBusy(bool busy)
+        {
+            if (IsDisposed) return;
+            canvas.Enabled = documents.Enabled = searchResults.Enabled = !busy;
+            view.SetBusy(busy);
+            cancelButton.Visible = busy && operation != null;
+        }
+
+        private Task<List<string>> IndexMissingAsync(IEnumerable<DocumentRecord> scope = null, bool retryFailed = true, bool forceReindex = false)
         {
             var indexer = new DocumentIndexer(context.Store, ocr);
             var token = operation.Token;
             return Task.Run(() => indexer.IndexMissing(context.State,
-                (name, page, count) => SetStatusThreadSafe("Indexation : " + name + " — " + page + "/" + count), token));
+                (name, page, count) => SetStatusThreadSafe("Indexation : " + name + " — " + page + "/" + count), token, scope, retryFailed, forceReindex));
         }
 
         private PendingWrite PrepareWrite(ExcelInterop.Range target, DocumentRecord document, int page, RectangleF zone, SnipType type, string text)
@@ -797,20 +809,24 @@ namespace Doctracker.AddIn.UI
 
         private static PageTextRecord ExtractIndexedSelection(DocumentRecord document, int pageNumber, RectangleF zone)
         {
-            var page = document.IndexedPages.FirstOrDefault(item => item.PageNumber == pageNumber);
-            if (page == null || page.Words == null || page.Words.Count == 0) return null;
-            var selected = page.Words.Where(word =>
-                word.X + word.Width / 2 >= zone.Left && word.X + word.Width / 2 <= zone.Right &&
-                word.Y + word.Height / 2 >= zone.Top && word.Y + word.Height / 2 <= zone.Bottom).ToList();
-            if (selected.Count == 0) return null;
-            return new PageTextRecord
+            try
             {
-                Text = string.Join("\n", selected.GroupBy(word => word.Line).Select(line => string.Join(" ", line.Select(word => word.Text)))),
-                Words = selected.Select(word => new WordRecord { Text = word.Text, Line = word.Line,
-                    X = Math.Max(0, (word.X - zone.X) / zone.Width), Y = Math.Max(0, (word.Y - zone.Y) / zone.Height),
-                    Width = Math.Min(word.X + word.Width, zone.Right) / zone.Width - Math.Max(word.X, zone.Left) / zone.Width,
-                    Height = Math.Min(word.Y + word.Height, zone.Bottom) / zone.Height - Math.Max(word.Y, zone.Top) / zone.Height }).ToList()
-            };
+                var page = document.IndexedPages.FirstOrDefault(item => item.PageNumber == pageNumber);
+                if (page == null || page.Words == null || page.Words.Count == 0) return null;
+                var selected = page.Words.Where(word =>
+                    word.X + word.Width / 2 >= zone.Left && word.X + word.Width / 2 <= zone.Right &&
+                    word.Y + word.Height / 2 >= zone.Top && word.Y + word.Height / 2 <= zone.Bottom).ToList();
+                if (selected.Count == 0) return null;
+                return new PageTextRecord
+                {
+                    Text = string.Join("\n", selected.GroupBy(word => word.Line).Select(line => string.Join(" ", line.Select(word => word.Text)))),
+                    Words = selected.Select(word => new WordRecord { Text = word.Text, Line = word.Line,
+                        X = Math.Max(0, (word.X - zone.X) / zone.Width), Y = Math.Max(0, (word.Y - zone.Y) / zone.Height),
+                        Width = Math.Min(word.X + word.Width, zone.Right) / zone.Width - Math.Max(word.X, zone.Left) / zone.Width,
+                        Height = Math.Min(word.Y + word.Height, zone.Bottom) / zone.Height - Math.Max(word.Y, zone.Top) / zone.Height }).ToList()
+                };
+            }
+            finally { document.ReleaseIndex(); }
         }
 
         private string ChooseSnipId(ExcelInterop.Range target)
@@ -835,9 +851,10 @@ namespace Doctracker.AddIn.UI
         {
             if (disposing)
             {
+                context.BusyChanged -= SetBusy;
                 operation?.Cancel();
-                // Disposal waits for native OCR use to finish; no COM work runs on the worker.
-                ocr.Dispose();
+                // Native OCR may still hold its lock; never wait for it on Excel's UI thread.
+                if (operation != null) Task.Run(() => ocr.Dispose()); else ocr.Dispose();
             }
             base.Dispose(disposing);
         }

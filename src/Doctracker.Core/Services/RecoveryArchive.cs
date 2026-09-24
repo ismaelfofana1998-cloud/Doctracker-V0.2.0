@@ -21,7 +21,7 @@ namespace Doctracker.Core.Services
                     {
                         cancellation.ThrowIfCancellationRequested();var path=store.ResolveDocumentPath(doc);ProjectStore.VerifyHash(doc,path);
                         zip.CreateEntryFromFile(path,doc.RelativePath.Replace('\\','/'),CompressionLevel.NoCompression);
-                        if(!string.IsNullOrEmpty(doc.IndexKey) && File.Exists(store.IndexPath(doc.IndexKey)))zip.CreateEntryFromFile(store.IndexPath(doc.IndexKey),"indexes/"+doc.IndexKey+".xml.gz",CompressionLevel.NoCompression);
+                        if(!string.IsNullOrEmpty(doc.IndexKey) && File.Exists(store.ResolveIndexPath(doc.IndexKey)))zip.CreateEntryFromFile(store.ResolveIndexPath(doc.IndexKey),"indexes/"+doc.IndexKey+".xml.gz",CompressionLevel.NoCompression);
                     }
                 }
                 cancellation.ThrowIfCancellationRequested();

@@ -35,9 +35,9 @@ namespace Doctracker.AddIn.UI
                     case "Backup": BackupAsync();break;
                     case "Restore": RestoreBackup();break;
                     case "RepairLinks": RepairLinks();break;
-                    case "RecoveryFolder": view.RecoveryFolder.PerformClick();break;
-                    case "Reindex": view.Reindex.PerformClick();break;
-                    case "Remove": view.Remove.PerformClick();break;
+                    case "RecoveryFolder": System.Diagnostics.Process.Start("explorer.exe",WorkbookProjectContext.CacheRoot);break;
+                    case "Reindex": ReindexDocumentsAsync();break;
+                    case "Remove": RemoveDocument();break;
                 }
             }
             catch(Exception exception){ShowError(exception);}
@@ -58,15 +58,6 @@ namespace Doctracker.AddIn.UI
         }
         private void WireProjectActions()
         {
-            view.ImportFolder.Click+=(s,e)=>ImportFolderAsync();
-            view.Categorize.Click+=(s,e)=>ChangeCategory();
-            view.CrossReference.Click+=(s,e)=>AssignReference();
-            view.Backup.Click+=(s,e)=>BackupAsync();
-            view.Restore.Click+=(s,e)=>RestoreBackup();
-            view.RepairLinks.Click+=(s,e)=>RepairLinks();
-            view.ExportPdf.Click+=(s,e)=>ExportPdfAsync();
-            view.SharedStorage.Click+=(s,e)=>SelectStorage();
-            view.RecoveryFolder.Click+=(s,e)=>System.Diagnostics.Process.Start("explorer.exe",WorkbookProjectContext.CacheRoot);
             view.Categories.SelectedIndexChanged+=(s,e)=>{if(!bindingCategories && !context.IsBusy)BindDocuments();};
         }
         private static string Prompt(IWin32Window owner,string title,string label,string value="")
@@ -142,7 +133,7 @@ namespace Doctracker.AddIn.UI
                     SetStatus(count+" pièces importées. "+errors.Count+" erreur(s).");if(errors.Count>0)MessageBox.Show(this,string.Join("\n",errors.Take(30)),"Import : pièces à vérifier");
                 }
             }
-            catch(OperationCanceledException){context.Store.Save(context.State);RefreshCategories();BindDocuments();SelectLastImported();SetStatus("Import arrêté. Les pièces déjà importées sont conservées.");}
+            catch(OperationCanceledException){try{context.Store.Save(context.State);RefreshCategories();BindDocuments();SelectLastImported();SetStatus("Import arrêté. Les pièces déjà importées sont conservées.");}catch(Exception failure){ShowError(failure);}}
             catch(Exception exception){ShowError(exception);}
             finally{EndOperation();}
         }

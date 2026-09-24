@@ -158,7 +158,7 @@ namespace Doctracker.AddIn.UI
             viewport.KeyDown+=(s,e)=>{if(e.KeyCode==Keys.Escape)CancelCommentDrag();};
             picture.MouseCaptureChanged+=(s,e)=>{if(!picture.Capture && commentDragging)CancelCommentDrag();};
             picture.Paint += Picture_Paint;
-            picture.MouseEnter += (s,e) => viewport.Focus();
+            // Hover must not steal keyboard focus from Excel or the search box.
             MouseEventHandler wheel = (s,e) => {
                 if ((ModifierKeys & Keys.Control) == 0) return;
                 SetZoom(zoom * (e.Delta > 0 ? 1.15 : 1 / 1.15), false);

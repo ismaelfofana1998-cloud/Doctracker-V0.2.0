@@ -15,7 +15,9 @@ namespace Doctracker.AddIn.Infrastructure
         private ExcelWorkbookParts parts;
         private PortableProject portable;
         private volatile bool dirty;
-        public bool IsBusy { get; set; }
+        private bool busy;
+        public event Action<bool> BusyChanged;
+        public bool IsBusy { get => busy; set { if (busy == value) return; busy = value; BusyChanged?.Invoke(value); } }
         public string WorkbookPath => currentWorkbookPath;
         public ProjectStore Store { get; private set; }
         public ProjectState State { get; private set; }
@@ -41,7 +43,8 @@ namespace Doctracker.AddIn.Infrastructure
                 dirty=true;
             }
             Bind(store,state);currentWorkbookPath=book.FullName;
-            Store.Save(State);MarkWorkbookDirty();
+            if (dirty) Store.Save(State);
+            MarkWorkbookDirty();
         }
         private void Bind(ProjectStore store,ProjectState state)
         {
@@ -63,6 +66,7 @@ namespace Doctracker.AddIn.Infrastructure
         }
         public void CaptureCellLinks()
         {
+            if (State.Snips.Count == 0 && State.CellLinks.Count == 0) return;
             var links=new List<CellLinkRecord>();var known=new HashSet<string>(State.Snips.Select(s=>s.Id));
             var cells=new Excel.ExcelCellGateway(workbook.Application);
             foreach(ExcelInterop.Worksheet sheet in workbook.Worksheets)

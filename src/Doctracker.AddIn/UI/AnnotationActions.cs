@@ -16,7 +16,6 @@ namespace Doctracker.AddIn.UI
         private void WireAnnotationActions()
         {
             view.DeleteSnip.Click += (s,e) => DeleteSnip(focusedSnipId);
-            view.DeleteSnipMenu.Click += (s,e) => DeleteSnip(focusedSnipId);
             canvas.DeleteProofRequested += DeleteSnip;
             canvas.EditCommentRequested += EditDocumentComment;
             canvas.CommentGeometryChanged += ResizeDocumentComment;
@@ -33,7 +32,7 @@ namespace Doctracker.AddIn.UI
         private void ToggleComment()
         {
             if(context.IsBusy)return;
-            activeSnipType=null;view.SetReadingMode(false);view.SetCommentMode(!canvas.CommentMode);
+            activeSnipType=null;view.SetCommentMode(!canvas.CommentMode);
             Ribbon.DoctrackerRibbon.Instance?.Refresh();
             SetStatus(canvas.CommentMode ? "Dessinez le cadre du commentaire sur le document." : "Commentaire désactivé.");
         }

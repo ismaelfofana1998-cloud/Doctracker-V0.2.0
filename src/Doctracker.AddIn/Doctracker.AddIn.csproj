@@ -32,7 +32,7 @@
     <UpdateEnabled>false</UpdateEnabled>
     <TargetCulture>fr-FR</TargetCulture>
     <FallbackCulture>en-US</FallbackCulture>
-    <ApplicationVersion>0.8.0.0</ApplicationVersion>
+    <ApplicationVersion>0.8.1.0</ApplicationVersion>
     <ApplicationRevision>0</ApplicationRevision>
     <BootstrapperEnabled>true</BootstrapperEnabled>
   </PropertyGroup>

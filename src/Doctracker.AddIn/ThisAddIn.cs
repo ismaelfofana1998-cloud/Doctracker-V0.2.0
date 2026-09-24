@@ -50,13 +50,13 @@ namespace Doctracker.AddIn
 
         private void Application_WindowActivate(ExcelInterop.Workbook workbook, ExcelInterop.Window window)
         {
-            Controller?.RefreshVisible();
-            DoctrackerRibbon.Instance?.Refresh();
+            try { Controller?.RefreshVisible(); DoctrackerRibbon.Instance?.Refresh(); }
+            catch (System.Runtime.InteropServices.COMException exception) { System.Diagnostics.Trace.WriteLine(exception); }
         }
         private void Application_WorkbookAfterSave(ExcelInterop.Workbook workbook, bool success)
         {
             Controller?.AfterSave(workbook,success);
-            if (success) Controller?.RefreshVisible();
+            // Saving does not change document selection or require rebinding the pane.
         }
         private void Application_WorkbookBeforeSave(ExcelInterop.Workbook workbook, bool saveAs, ref bool cancel)
         {
