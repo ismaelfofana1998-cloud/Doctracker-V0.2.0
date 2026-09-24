@@ -1,4 +1,4 @@
-# Recette Excel Windows 0.3
+# Recette Excel Windows 0.4
 
 À exécuter dans Excel de bureau après installation de l'artefact **du bon commit**.
 Ne pas utiliser de pièces confidentielles pour la première recette.
@@ -17,14 +17,14 @@ Ne pas utiliser de pièces confidentielles pour la première recette.
 5. Essayer une zone sans texte et deux nombres en mode Nombre : aucune preuve
    ne doit être créée. Essayer un texte commençant par `=1+1` : il reste du texte.
 6. Tableau : vérifier les colonnes dans l'aperçu, corriger une valeur, insérer,
-   puis double-cliquer sur plusieurs cellules (pas seulement la première).
+   puis cliquer une fois sur plusieurs cellules (pas seulement la première).
    Annuler l'aperçu : aucune cellule/preuve créée.
 7. Somme : sélectionner une cellule vide, dessiner successivement `10,00`,
    `5,25`, `1,25`. Attendu : `16,50` dans la même cellule avec trois preuves.
-   Double-cliquer et vérifier chacune. Une modification manuelle de la somme
+   Cliquer une fois et choisir chacune dans la liste de preuves. Une modification manuelle de la somme
    doit empêcher l'ajout silencieux d'une nouvelle composante.
 8. Validation/Exception : cibler une cellule contenant une formule, ajouter deux
-   zones. La formule reste identique. Deux preuves sont accessibles au double-clic.
+   zones. La formule reste identique. Deux preuves sont accessibles dans la liste de preuves.
 9. Insertion sur cellule ou tableau rempli : refuser l'écrasement et vérifier
    l'absence de changement. Accepter, puis vérifier que les notes personnelles
    antérieures restent présentes. Tester une feuille protégée et des cellules
@@ -39,13 +39,23 @@ Ne pas utiliser de pièces confidentielles pour la première recette.
 12. Ouvrir deux classeurs et deux fenêtres d'un même classeur : sélectionner leurs
     pièces, lancer l'OCR, basculer. Aucune écriture ne doit atteindre le mauvais
     classeur. Enregistrer/fermer pendant une opération demande d'attendre ou d'annuler.
-13. Revue : Reviewed, Rejected, puis Prepared. Vérifier commentaire et couleur ;
+13. Revue : Reviewed, Rejected, puis Prepared. Vérifier commentaire et statut ; la couleur du type de snip est conservée ;
     Prepared remet les informations de relecteur à zéro.
 14. Enregistrer, fermer et rouvrir classeur + dossier : vérifier les preuves.
     Faire Enregistrer sous avec volet actif vers un nouveau nom : dossier copié,
     ancien dossier conservé. Un dossier cible existant est signalé sans écrasement.
 15. Ouvrir une mission 0.2, réindexer, vérifier les anciens snips et les nouvelles
     positions. Conserver une sauvegarde de recette avant migration.
+
+16. À 100 %, 150 % et 200 % dans Windows, vérifier un volet étroit et large : titre,
+    recherche, mode et statut lisibles, documents en haut à droite, aucune colonne gauche.
+    Les résultats sont sous la recherche ; Masquer / Échap redonne la place au document.
+17. Passer d'une cellule liée à une autre à la souris et au clavier. La bonne pièce,
+    la bonne page et la zone apparaissent sans dialogue ni déplacement de la sélection
+    Excel. À zoom manuel, le zoom reste inchangé et la preuve est ramenée dans la vue.
+18. Vérifier sept couleurs distinctes : texte bleu, nombre turquoise, date indigo,
+    somme jaune, tableau violet, validation verte, exception rouge. Les cellules d'un
+    tableau restent violettes même quand leurs valeurs sont des nombres ou dates.
 
 La compilation GitHub et les smoke tests ne constituent pas l'exécution de cette
 recette. Consigner la version d'Excel, son architecture, le commit de l'installateur,

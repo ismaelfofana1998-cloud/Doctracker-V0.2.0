@@ -1,4 +1,7 @@
 using System;
+using System.Drawing;
+using System.Collections.Generic;
+using System.Windows.Forms;
 using System.Runtime.InteropServices;
 using Doctracker.AddIn.UI;
 using Doctracker.Core.Models;
@@ -15,30 +18,48 @@ namespace Doctracker.AddIn.Ribbon
     <tabs>
       <tab id='DoctrackerTab' label='Doctracker'>
         <group id='ProjectGroup' label='Dossier'>
-          <button id='OpenPane' label='Ouvrir Doctracker' size='large' onAction='OpenPane_OnAction'/>
-          <button id='ImportDocuments' label='Ajouter des pièces' onAction='ImportDocuments_OnAction'/>
-          <button id='SearchDocuments' label='Rechercher' size='large' onAction='Search_OnAction'/>
+          <button id='OpenPane' getImage='GetImage' label='Ouvrir Doctracker' size='large' onAction='OpenPane_OnAction'/>
+          <button id='ImportDocuments' getImage='GetImage' label='Ajouter des pièces' onAction='ImportDocuments_OnAction'/>
+          <button id='SearchDocuments' getImage='GetImage' label='Rechercher' size='large' onAction='Search_OnAction'/>
         </group>
-        <group id='SnipGroup' label='Mode snip — actif jusqu’à désactivation'>
-          <toggleButton id='ValidationSnip' label='Validation' onAction='ValidationSnip_OnAction' getPressed='ValidationSnip_GetPressed'/>
-          <toggleButton id='ExceptionSnip' label='Exception' onAction='ExceptionSnip_OnAction' getPressed='ExceptionSnip_GetPressed'/>
-          <toggleButton id='TextSnip' label='Texte' onAction='TextSnip_OnAction' getPressed='TextSnip_GetPressed'/>
-          <toggleButton id='NumberSnip' label='Nombre' onAction='NumberSnip_OnAction' getPressed='NumberSnip_GetPressed'/>
-          <toggleButton id='DateSnip' label='Date' onAction='DateSnip_OnAction' getPressed='DateSnip_GetPressed'/>
-          <toggleButton id='SumSnip' label='Somme' onAction='SumSnip_OnAction' getPressed='SumSnip_GetPressed'/>
-          <toggleButton id='TableSnip' label='Tableau' onAction='TableSnip_OnAction' getPressed='TableSnip_GetPressed'/>
+        <group id='SnipGroup' label='Snips'>
+          <toggleButton id='ValidationSnip' getImage='GetImage' label='Validation' onAction='ValidationSnip_OnAction' getPressed='ValidationSnip_GetPressed' size='large'/>
+          <toggleButton id='ExceptionSnip' getImage='GetImage' label='Exception' onAction='ExceptionSnip_OnAction' getPressed='ExceptionSnip_GetPressed' size='large'/>
+          <toggleButton id='TextSnip' getImage='GetImage' label='Texte' onAction='TextSnip_OnAction' getPressed='TextSnip_GetPressed' size='large'/>
+          <toggleButton id='NumberSnip' getImage='GetImage' label='Nombre' onAction='NumberSnip_OnAction' getPressed='NumberSnip_GetPressed' size='large'/>
+          <toggleButton id='DateSnip' getImage='GetImage' label='Date' onAction='DateSnip_OnAction' getPressed='DateSnip_GetPressed' size='large'/>
+          <toggleButton id='SumSnip' getImage='GetImage' label='Somme' onAction='SumSnip_OnAction' getPressed='SumSnip_GetPressed' size='large'/>
+          <toggleButton id='TableSnip' getImage='GetImage' label='Tableau' onAction='TableSnip_OnAction' getPressed='TableSnip_GetPressed' size='large'/>
         </group>
         <group id='MatchingGroup' label='Contrôle'>
-          <button id='SetMatchInput' label='Définir recherche' onAction='SetMatchInput_OnAction'/>
-          <button id='SetMatchOutput' label='Définir résultat' onAction='SetMatchOutput_OnAction'/>
-          <button id='Match' label='Lancer le matching' size='large' onAction='Match_OnAction'/>
-          <button id='OpenProof' label='Ouvrir la preuve' onAction='OpenProof_OnAction'/>
-          <button id='ReviewProof' label='Revoir' onAction='ReviewProof_OnAction'/>
+          <button id='SetMatchInput' getImage='GetImage' label='Définir recherche' onAction='SetMatchInput_OnAction'/>
+          <button id='SetMatchOutput' getImage='GetImage' label='Définir résultat' onAction='SetMatchOutput_OnAction'/>
+          <button id='Match' getImage='GetImage' label='Lancer le matching' size='large' onAction='Match_OnAction'/>
+          <button id='OpenProof' getImage='GetImage' label='Ouvrir la preuve' onAction='OpenProof_OnAction'/>
+          <button id='ReviewProof' getImage='GetImage' label='Revoir' onAction='ReviewProof_OnAction'/>
         </group>
       </tab>
     </tabs>
   </ribbon>
 </customUI>";
+
+        private readonly Dictionary<string, object> images = new Dictionary<string, object>();
+        public object GetImage(IRibbonControl control)
+        {
+            object image;
+            if (images.TryGetValue(control.Id, out image)) return image;
+            var key = control.Id.EndsWith("Snip", StringComparison.Ordinal) ? control.Id.Substring(0, control.Id.Length - 4) : control.Id;
+            SnipType type;
+            using (var bitmap = SnipTheme.Icon(key, 32, Enum.TryParse(key, out type) ? SnipTheme.ColorFor(type) : SnipTheme.Ink))
+                image = PictureConverter.Convert(bitmap);
+            images.Add(control.Id, image);
+            return image;
+        }
+        private sealed class PictureConverter : AxHost
+        {
+            private PictureConverter() : base("") { }
+            public static object Convert(Image image) => GetIPictureDispFromPicture(image);
+        }
 
         private IRibbonUI ribbon;
 

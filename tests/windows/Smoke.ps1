@@ -34,7 +34,59 @@ try {
     $crop = $canvas.CropSelection()
     if ($crop.GetPixel(30, 30).R -lt 240 -or $crop.GetPixel(30, 30).G -gt 30) { throw 'Crop coordinates drifted from the selected region.' }
     $crop.Dispose()
-    Write-Host 'PASS: canvas loading, scaled display, normalized crop and proof navigation'
+    # Repeated cell navigation must reuse the rendered page and preserve zoom.
+    $type.GetMethod('SetZoom', $flags).Invoke($canvas, [object[]]@(1.25, $false)) | Out-Null
+    $beforeImage = $picture.Image
+    $canvas.NavigateTo($imagePath, $snip)
+    if (![object]::ReferenceEquals($beforeImage, $picture.Image)) { throw 'Selecting a proof rerendered the same page.' }
+    if ([Math]::Abs($type.GetField('zoom', $flags).GetValue($canvas) - 1.25) -gt .001) { throw 'Selecting a proof reset the zoom.' }
+    Write-Host 'PASS: canvas loading, scaled display, normalized crop, proof navigation and retained zoom'
+
+    $previewDirectory = Join-Path $PSScriptRoot '../../artifacts/ui-previews'
+    [void][IO.Directory]::CreateDirectory($previewDirectory)
+    $viewType = $assembly.GetType('Doctracker.AddIn.UI.WorkspaceView', $true)
+    foreach ($scenario in @(@{Width=760;Height=850;Scale=1.0}, @{Width=420;Height=850;Scale=1.0}, @{Width=840;Height=1500;Scale=2.0})) {
+        $form = [Windows.Forms.Form]::new()
+        $view = [Activator]::CreateInstance($viewType, $true)
+        try {
+            $form.ClientSize = [Drawing.Size]::new($scenario.Width,$scenario.Height)
+            $form.Controls.Add($view)
+            $documents = $viewType.GetField('Documents', $flags).GetValue($view)
+            [void]$documents.Items.Add('Facture - septembre 2026.pdf'); $documents.SelectedIndex=0
+            $viewType.GetField('Query', $flags).GetValue($view).Text='FA-2026-0142'
+            $viewType.GetField('IndexState', $flags).GetValue($view).Text='3 documents · 3 indexés'
+            $viewType.GetField('Results', $flags).GetValue($view).Items.Add('Facture - septembre 2026.pdf · page 1 · score 100 %') | Out-Null
+            $view.SetMode([Doctracker.Core.Models.SnipType]::Text)
+            $view.ShowResults(1)
+            $viewType.GetField('Proofs', $flags).GetValue($view).Items.Add('Texte · Facture - septembre 2026.pdf · p. 1 · Achats!F12') | Out-Null
+            $viewType.GetField('Proofs', $flags).GetValue($view).SelectedIndex=0
+            $view.ShowProofs($true)
+            $viewCanvas=$viewType.GetField('Canvas', $flags).GetValue($view)
+            $viewCanvas.LoadDocument($imagePath)
+            $viewCanvas.NavigateTo($imagePath,$snip)
+            $form.Show(); [Windows.Forms.Application]::DoEvents()
+            if ($scenario.Scale -ne 1) {
+                # Simulate larger Windows text and geometry; actual Office per-monitor DPI remains a desktop check.
+                $view.Scale([Drawing.SizeF]::new($scenario.Scale,$scenario.Scale))
+                $view.Font=[Drawing.Font]::new('Segoe UI',9*$scenario.Scale)
+                $form.ClientSize=[Drawing.Size]::new($scenario.Width,$scenario.Height)
+            }
+            $view.PerformLayout(); [Windows.Forms.Application]::DoEvents()
+            foreach ($name in @('Documents','Query','Search','ModeState','Status','IndexState','Proofs')) {
+                $control=$viewType.GetField($name,$flags).GetValue($view)
+                $preferred=$control.GetPreferredSize([Drawing.Size]::new($control.Width,0))
+                if ($control.Height + 2 -lt $preferred.Height) { throw "Clipped $name at $($scenario.Width) / $($scenario.Scale): $($control.Height) < $($preferred.Height)" }
+                if ($control.Right -gt $control.Parent.ClientSize.Width + 2) { throw "Horizontal overflow: $name" }
+            }
+            if ($viewCanvas.Height -lt 160) { throw 'Document area collapsed.' }
+            $screenshot=[Drawing.Bitmap]::new($view.Width,$view.Height)
+            $view.DrawToBitmap($screenshot,[Drawing.Rectangle]::new(0,0,$view.Width,$view.Height))
+            $screenshot.Save((Join-Path $previewDirectory ("workspace-"+$scenario.Width+"-"+$scenario.Scale+".png")))
+            $screenshot.Dispose()
+        } finally { $form.Dispose() }
+    }
+    Write-Host 'PASS: responsive workspace at 420/760 px, enlarged text, controls without vertical clipping, UI previews'
+
 
     $ocrType = $assembly.GetType('Doctracker.AddIn.Infrastructure.TesseractOcrEngine', $true)
     $ocr = [Activator]::CreateInstance($ocrType, $true)

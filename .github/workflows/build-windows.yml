@@ -97,6 +97,14 @@ jobs:
           & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File ./tests/windows/Smoke.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Upload UI previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Doctracker-UI-Previews
+          path: artifacts/ui-previews/*.png
+          if-no-files-found: warn
+
       - name: Publish ClickOnce installer
         shell: pwsh
         run: |

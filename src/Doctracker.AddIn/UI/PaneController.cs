@@ -71,6 +71,28 @@ namespace Doctracker.AddIn.UI
             Run(entry => { found = entry.Control.TryNavigateFromCell(target); if (found) entry.Pane.Visible = true; });
             return found;
         }
+        public void SelectionChanged(ExcelInterop.Range target)
+        {
+            // Excel fires this for mouse clicks AND keyboard navigation. Never steal focus.
+            try
+            {
+                var book = application.ActiveWorkbook;
+                if (book == null || IsBusy(book)) return;
+                var window = application.ActiveWindow;
+                WindowPane existing;
+                if (target == null || target.Cells.CountLarge != 1 || target.Comment == null ||
+                    !((string)target.Comment.Text()).Contains(Excel.ExcelCellGateway.MarkerPrefix))
+                {
+                    if (window != null && panes.TryGetValue(window.Hwnd, out existing)) existing.Control.ClearCellProof();
+                    return;
+                }
+                var entry = Current();
+                if (entry.Control.TryNavigateFromCell(target)) entry.Pane.Visible = true;
+            }
+            catch (System.Runtime.InteropServices.COMException) { /* Excel can be editing or closing. */ }
+            catch (Exception exception) { System.Diagnostics.Trace.WriteLine("Doctracker selection: " + exception.Message); }
+        }
+
         public bool IsBusy(ExcelInterop.Workbook workbook) => contexts.TryGetValue(workbook, out var context) && context.IsBusy;
         public void RefreshVisible()
         {

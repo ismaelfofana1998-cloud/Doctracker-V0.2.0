@@ -76,11 +76,10 @@ namespace Doctracker.AddIn.Excel
             ids.Add(snip.Id);
             var text = userNote + "\n[DOCTRACKER]\n" + string.Join("\n", ids.Select(id => MarkerPrefix + id)) +
                 "\nDocument : " + document.OriginalName + "\nPage : " + snip.PageNumber + "\nType : " + snip.Type +
-                "\nStatut : " + snip.Status + "\nCommentaire : " + snip.Comment + "\nDouble-cliquer pour ouvrir la preuve.";
+                "\nStatut : " + snip.Status + "\nCommentaire : " + snip.Comment + "\nSélectionner la cellule pour afficher la preuve.";
             if (target.Comment == null) target.AddComment(text); else target.Comment.Text(text);
             target.Comment.Visible = false;
-            var color = snip.Status == ReviewStatus.Rejected || snip.Type == SnipType.Exception ? Color.MistyRose :
-                snip.Status == ReviewStatus.Reviewed || snip.Type == SnipType.Validation ? Color.Honeydew : Color.FromArgb(255, 244, 225);
+            var color = UI.SnipTheme.Tint(snip.SourceType ?? snip.Type);
             target.Interior.Color = ColorTranslator.ToOle(color);
         }
 

@@ -1,4 +1,4 @@
-# Doctracker 0.3.0 — complément Excel Windows
+# Doctracker 0.4.0 — complément Excel Windows
 
 Doctracker importe des PDF et images dans un dossier de mission local. Il permet
 de sélectionner des zones, extraire leur contenu dans Excel, associer plusieurs
@@ -17,8 +17,8 @@ preuves à une cellule et revenir à la source pour la revue.
    l'indexation utilise le texte natif des PDF ou l'OCR français/anglais pour les scans.
 6. Sélectionner une cellule, choisir **Texte**, **Nombre**, **Date**, **Somme**,
    **Tableau**, **Validation** ou **Exception**, puis dessiner une zone.
-7. Double-cliquer sur une cellule liée pour revenir à sa preuve. S'il y en a plusieurs,
-   choisir la preuve dans la liste. Utiliser **Revoir** pour le statut et le commentaire.
+7. Cliquer une fois sur une cellule liée pour afficher sa preuve. S'il y en a plusieurs,
+   choisir la preuve dans la liste au-dessus du document. Utiliser **Revoir** pour le statut et le commentaire.
 
 Prérequis : Windows, Excel de bureau, .NET Framework 4.8, runtime VSTO,
 redistribuables Microsoft Visual C++ 2015–2022 correspondant à l'architecture d'Excel.
@@ -107,7 +107,7 @@ Le lien conservé doit être revu avant de conclure le contrôle.
 - **Excel installé** : la recette COM/interaction utilisateur doit être effectuée
   sur un poste Windows avec Excel ; le runner de compilation n'héberge pas Excel.
 
-Voir [les corrections et limites](docs/CORRECTIONS_0.3.md) et
+Voir [la nouvelle interface 0.4](docs/INTERFACE_0.4.md), [les corrections et limites](docs/CORRECTIONS_0.3.md) et
 [la recette Excel](docs/VALIDATION_EXCEL.md).
 
 ## Développement

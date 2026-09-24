@@ -21,6 +21,9 @@ namespace Doctracker.AddIn.UI
         private readonly WorkbookProjectContext context;
         private readonly ExcelCellGateway cells;
         private readonly IOcrEngine ocr;
+        private readonly WorkspaceView view;
+        private bool bindingProofs;
+        private string focusedSnipId;
         private readonly DocumentCanvas canvas;
         private readonly ComboBox documents;
         private TextBox searchBox;
@@ -55,55 +58,37 @@ namespace Doctracker.AddIn.UI
             BackColor = Color.White;
             Font = new Font("Segoe UI", 9F);
 
-            var header = BuildHeader();
-            var searchBar = BuildSearchBar(out searchBox);
-            var workflowBar = BuildWorkflowBar(out modeState);
-
-            documents = new ComboBox
-            {
-                Dock = DockStyle.Top,
-                Height = 30,
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                DisplayMember = "OriginalName",
-                FlatStyle = FlatStyle.Flat,
-                IntegralHeight = false,
-                BackColor = Color.White
-            };
+            AutoScaleMode = AutoScaleMode.Dpi;
+            AutoScaleDimensions = new SizeF(96, 96);
+            view = new WorkspaceView();
+            Controls.Add(view);
+            documents = view.Documents;
+            searchBox = view.Query;
+            searchResults = view.Results;
+            ocrState = view.IndexState;
+            modeState = view.ModeState;
+            status = view.Status;
+            cancelButton = view.Cancel;
+            canvas = view.Canvas;
             documents.SelectedIndexChanged += Documents_SelectedIndexChanged;
-
-            var importButton = new Button
-            {
-                Text = "Ajouter des pièces — OCR automatique",
-                Dock = DockStyle.Top,
-                Height = 34,
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(18, 28, 45),
-                ForeColor = Color.White,
-                TabStop = false
-            };
-            importButton.FlatAppearance.BorderSize = 0;
-            importButton.Click += (sender, args) => ImportDocuments();
-
-            ocrState = new Label
-            {
-                Text = "Aucune pièce",
-                Dock = DockStyle.Top,
-                Height = 24,
-                Padding = new Padding(6, 4, 0, 0),
-                ForeColor = Color.FromArgb(80, 88, 98),
-                BackColor = Color.FromArgb(248, 249, 251)
-            };
-
-            searchResults = new ListBox
-            {
-                Dock = DockStyle.Fill,
-                BorderStyle = BorderStyle.FixedSingle,
-                IntegralHeight = false,
-                DisplayMember = "Caption"
-            };
             searchResults.SelectedIndexChanged += SearchResults_SelectedIndexChanged;
-
-            var reindexButton = new Button { Text = "Réindexer les pièces", Dock = DockStyle.Top, Height = 28, FlatStyle = FlatStyle.Flat };
+            view.Import.Click += (sender, args) => ImportDocuments();
+            view.Search.Click += (sender, args) => SearchFromPane();
+            searchBox.KeyDown += (sender, args) => {
+                if (args.KeyCode == Keys.Enter) { args.SuppressKeyPress = true; SearchFromPane(); }
+                if (args.KeyCode == Keys.Escape) { args.SuppressKeyPress = true; view.HideResults(); }
+            };
+            view.ModeChanged += SetSnipMode;
+            view.Proofs.SelectedIndexChanged += (sender, args) => {
+                if (bindingProofs || context.IsBusy) return;
+                var item = view.Proofs.SelectedItem as ProofItem;
+                if (item == null) return;
+                try { EnsureActiveWorkbook(); NavigateToSnip(item.Id); }
+                catch (Exception exception) { SetStatus(exception.Message); }
+            };
+            canvas.SelectionCompleted += Canvas_SelectionCompleted;
+            cancelButton.Click += (sender, args) => operation?.Cancel();
+            var reindexButton = view.Reindex;
             reindexButton.Click += async (sender, args) =>
             {
                 if (context.IsBusy) return;
@@ -121,7 +106,7 @@ namespace Doctracker.AddIn.UI
                 finally { EndOperation(); }
             };
 
-            var removeButton = new Button { Text = "Retirer la pièce sélectionnée", Dock = DockStyle.Top, Height = 28, FlatStyle = FlatStyle.Flat };
+            var removeButton = view.Remove;
             removeButton.Click += (sender, args) =>
             {
                 if (context.IsBusy) return;
@@ -145,53 +130,6 @@ namespace Doctracker.AddIn.UI
                 catch (Exception exception) { ShowError(exception); }
             };
 
-            var documentPanel = new Panel
-            {
-                Dock = DockStyle.Fill,
-                Padding = new Padding(8),
-                BackColor = Color.White
-            };
-            documentPanel.Controls.Add(searchResults);
-            documentPanel.Controls.Add(ocrState);
-            documentPanel.Controls.Add(removeButton);
-            documentPanel.Controls.Add(reindexButton);
-            documentPanel.Controls.Add(importButton);
-            documentPanel.Controls.Add(documents);
-
-            canvas = new DocumentCanvas();
-            canvas.SelectionCompleted += Canvas_SelectionCompleted;
-
-            var split = new SplitContainer
-            {
-                Dock = DockStyle.Fill,
-                Size = new Size(760, 600),
-                FixedPanel = FixedPanel.Panel1,
-                Panel1MinSize = 185,
-                BackColor = Color.FromArgb(231, 235, 240)
-            };
-            split.SplitterDistance = 225;
-            split.Panel1.Controls.Add(documentPanel);
-            split.Panel2.Controls.Add(canvas);
-
-            status = new Label
-            {
-                Dock = DockStyle.Bottom,
-                Height = 28,
-                Text = "Prêt",
-                Padding = new Padding(10, 6, 0, 0),
-                ForeColor = Color.FromArgb(80, 88, 98),
-                BackColor = Color.FromArgb(248, 249, 251),
-                AutoEllipsis = true
-            };
-
-            cancelButton = new Button { Text = "Annuler l’opération", Dock = DockStyle.Bottom, Height = 28, Visible = false };
-            cancelButton.Click += (sender, args) => operation?.Cancel();
-            Controls.Add(split);
-            Controls.Add(cancelButton);
-            Controls.Add(status);
-            Controls.Add(workflowBar);
-            Controls.Add(searchBar);
-            Controls.Add(header);
         }
 
         public void RefreshProject()
@@ -204,12 +142,8 @@ namespace Doctracker.AddIn.UI
         public void SetSnipMode(SnipType? type)
         {
             activeSnipType = type;
-            modeState.Text = type.HasValue
-                ? "Mode actif : " + type.Value + " — dessinez les zones à la suite"
-                : "Mode actif : aucun — choisissez un type dans le ruban";
-            modeState.ForeColor = type.HasValue
-                ? Color.FromArgb(24, 112, 70)
-                : Color.FromArgb(80, 88, 98);
+            view.SetMode(type);
+            Ribbon.DoctrackerRibbon.Instance?.Refresh();
             SetStatus(type.HasValue
                 ? "Mode " + type.Value + " activé. Vous pouvez sniper plusieurs zones sans recliquer."
                 : "Mode de snip désactivé.");
@@ -314,6 +248,7 @@ namespace Doctracker.AddIn.UI
                             var destination = (ExcelInterop.Range)target.Offset[row, column];
                             var cellType = InferType(text);
                             var write = PrepareWrite(destination, document, pageNumber, zone, cellType, text);
+                            write.Snip.SourceType = SnipType.Table;
                             if (source != null && source.Text != text) write.Snip.Comment = "Texte corrigé dans l'aperçu. OCR : " + source.Text;
                             writes.Add(write);
                         }
@@ -339,6 +274,7 @@ namespace Doctracker.AddIn.UI
                 if (!ConfirmOverwrite(writes, preserveValue || appendSum)) return;
                 CommitWrites(writes, preserveValue || appendSum);
                 canvas.ClearSelection();
+                UpdateDocumentProofs();
                 SetStatus(writes.Count + " preuve(s) créée(s). Sélectionnez la prochaine cellule ou dessinez la zone suivante.");
                 if (writes.Count > 0 && !preserveValue && type != SnipType.Sum && writes.Max(w => w.Target.Row) < target.Worksheet.Rows.Count &&
                     (application.Selection as ExcelInterop.Range)?.Cells.CountLarge == 1 &&
@@ -387,6 +323,7 @@ namespace Doctracker.AddIn.UI
                         Document = context.State.Documents.First(item => item.Id == candidate.DocumentId) }).ToList());
                 operation.Token.ThrowIfCancellationRequested();
                 searchResults.DataSource = results;
+                view.ShowResults(results.Count);
                 SetStatus(results.Count + " résultat(s)." + (errors.Count > 0 ? " Attention : " + errors.Count + " pièce(s) non indexée(s)." : ""));
             }
             catch (OperationCanceledException) { SetStatus("Recherche annulée."); }
@@ -516,22 +453,35 @@ namespace Doctracker.AddIn.UI
             finally { EndOperation(); }
         }
 
+        // Passive selection navigation never opens a dialog or changes the Excel selection.
         public bool TryNavigateFromCell(ExcelInterop.Range target)
         {
             try
             {
-                if (context.IsBusy || string.IsNullOrWhiteSpace(cells.GetSnipId(target))) return false;
+                if (context.IsBusy) return false;
+                var ids = cells.GetSnipIds(target);
+                if (ids.Count == 0) { ClearCellProof(); return false; }
                 EnsureProject();
-                BindDocuments();
-                var snipId = ChooseSnipId(target);
-                if (string.IsNullOrWhiteSpace(snipId)) return false;
-                return NavigateToSnip(snipId);
+                var items = ids.Select(id => context.State.Snips.FirstOrDefault(snip => snip.Id == id))
+                    .Where(snip => snip != null).Select(snip => new ProofItem { Id = snip.Id,
+                        Caption = SnipTheme.LabelFor(snip.SourceType ?? snip.Type) + " · " +
+                        context.State.Documents.FirstOrDefault(doc => doc.Id == snip.DocumentId)?.OriginalName +
+                        " · p. " + snip.PageNumber + " · " + snip.WorksheetName + "!" + snip.CellAddress }).ToList();
+                if (items.Count == 0) { ClearCellProof(); return false; }
+                bindingProofs = true;
+                try { view.Proofs.DataSource = items; view.Proofs.SelectedIndex = items.Count - 1; view.ShowProofs(true); }
+                finally { bindingProofs = false; }
+                return NavigateToSnip(items[items.Count - 1].Id);
             }
-            catch (Exception exception)
-            {
-                ShowError(exception);
-                return false;
-            }
+            catch (Exception exception) { SetStatus("Preuve indisponible : " + exception.Message); return false; }
+        }
+
+        public void ClearCellProof()
+        {
+            if (context.IsBusy) return;
+            focusedSnipId = null;
+            view.ShowProofs(false);
+            canvas.ClearSelection();
         }
 
         public void NavigateFromSelection()
@@ -595,96 +545,17 @@ namespace Doctracker.AddIn.UI
 
             BindDocuments();
             SelectDocument(document.Id);
+            UpdateDocumentProofs();
             canvas.NavigateTo(context.Store.ResolveDocumentPath(document), snip);
+            focusedSnipId = snip.Id;
             SetStatus(document.OriginalName + " — page " + snip.PageNumber + " — " + snip.Status);
             return true;
         }
 
-        private Control BuildHeader()
+        private void UpdateDocumentProofs()
         {
-            var header = new Panel
-            {
-                Dock = DockStyle.Top,
-                Height = 54,
-                BackColor = Color.FromArgb(255, 122, 0)
-            };
-            var title = new Label
-            {
-                Text = "DOCTRACKER",
-                ForeColor = Color.White,
-                Font = new Font("Segoe UI Semibold", 15F, FontStyle.Bold),
-                Location = new Point(12, 7),
-                AutoSize = true
-            };
-            var subtitle = new Label
-            {
-                Text = "Preuve locale • OCR • Recherche • Traçabilité",
-                ForeColor = Color.FromArgb(255, 244, 230),
-                Location = new Point(14, 34),
-                AutoSize = true
-            };
-            header.Controls.Add(title);
-            header.Controls.Add(subtitle);
-            return header;
-        }
-
-        private Control BuildSearchBar(out TextBox queryBox)
-        {
-            var bar = new Panel
-            {
-                Dock = DockStyle.Top,
-                Height = 38,
-                Padding = new Padding(8, 5, 8, 5),
-                BackColor = Color.White
-            };
-            queryBox = new TextBox
-            {
-                Dock = DockStyle.Fill,
-                BorderStyle = BorderStyle.FixedSingle
-            };
-            var searchButton = new Button
-            {
-                Text = "Rechercher",
-                Dock = DockStyle.Right,
-                Width = 92,
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(18, 28, 45),
-                ForeColor = Color.White,
-                TabStop = false
-            };
-            searchButton.FlatAppearance.BorderSize = 0;
-            searchButton.Click += (sender, args) => SearchFromPane();
-            queryBox.KeyDown += (sender, args) =>
-            {
-                if (args.KeyCode == Keys.Enter)
-                {
-                    args.SuppressKeyPress = true;
-                    SearchFromPane();
-                }
-            };
-            bar.Controls.Add(queryBox);
-            bar.Controls.Add(searchButton);
-            return bar;
-        }
-
-        private Control BuildWorkflowBar(out Label label)
-        {
-            var bar = new Panel
-            {
-                Dock = DockStyle.Top,
-                Height = 28,
-                Padding = new Padding(10, 5, 5, 0),
-                BackColor = Color.FromArgb(248, 249, 251)
-            };
-            label = new Label
-            {
-                Text = "Mode actif : aucun — choisissez un type dans le ruban",
-                Dock = DockStyle.Fill,
-                AutoEllipsis = true,
-                ForeColor = Color.FromArgb(80, 88, 98)
-            };
-            bar.Controls.Add(label);
-            return bar;
+            var document = SelectedDocument;
+            canvas.SetProofs(document == null ? Enumerable.Empty<SnipRecord>() : context.State.Snips.Where(snip => snip.DocumentId == document.Id));
         }
 
         private void Documents_SelectedIndexChanged(object sender, EventArgs e)
@@ -695,6 +566,7 @@ namespace Doctracker.AddIn.UI
                 if (document != null && context.State.Documents.Any(item => item.Id == document.Id))
                 {
                     if (!string.Equals(canvas.CurrentPath, context.Store.ResolveDocumentPath(document), StringComparison.OrdinalIgnoreCase)) canvas.LoadDocument(context.Store.ResolveDocumentPath(document));
+                    UpdateDocumentProofs();
                     SetStatus(document.OriginalName + " — sélectionnez une zone ou recherchez dans les pièces.");
                 }
                 else canvas.ClearDocument();
@@ -735,6 +607,7 @@ namespace Doctracker.AddIn.UI
                 boundProjectPath = context.WorkbookPath;
                 matchingInputSheet = matchingInputAddress = matchingOutputSheet = matchingOutputAddress = null;
                 searchResults.DataSource = null;
+                view.HideResults(); view.ShowProofs(false); focusedSnipId = null;
                 canvas.ClearDocument();
                 BindDocuments();
             }
@@ -743,15 +616,18 @@ namespace Doctracker.AddIn.UI
         private void BindDocuments()
         {
             var selectedId = SelectedDocument?.Id;
-            documents.SelectedIndexChanged -= Documents_SelectedIndexChanged;
-            documents.DataSource = null;
-            documents.DataSource = context.State.Documents.ToList();
-            documents.DisplayMember = "OriginalName";
-            documents.SelectedIndexChanged += Documents_SelectedIndexChanged;
-            if (selectedId != null) SelectDocument(selectedId);
-            if (documents.SelectedIndex < 0 && documents.Items.Count > 0) documents.SelectedIndex = 0;
-
-            Documents_SelectedIndexChanged(this, EventArgs.Empty);
+            var listChanged = documents.Items.Count != context.State.Documents.Count ||
+                documents.Items.Cast<DocumentRecord>().Where((doc, index) => !ReferenceEquals(doc, context.State.Documents[index])).Any();
+            if (listChanged)
+            {
+                documents.SelectedIndexChanged -= Documents_SelectedIndexChanged;
+                documents.DataSource = context.State.Documents.ToList();
+                documents.DisplayMember = "OriginalName";
+                if (selectedId != null) SelectDocument(selectedId);
+                if (documents.SelectedIndex < 0 && documents.Items.Count > 0) documents.SelectedIndex = 0;
+                documents.SelectedIndexChanged += Documents_SelectedIndexChanged;
+                Documents_SelectedIndexChanged(this, EventArgs.Empty);
+            }
             var total = context.State.Documents.Count;
             var indexed = context.State.Documents.Count(item => item.IndexComplete);
             ocrState.Text = total == 0
@@ -828,7 +704,7 @@ namespace Doctracker.AddIn.UI
             context.IsBusy = true;
             operation = new CancellationTokenSource();
             canvas.Enabled = documents.Enabled = searchResults.Enabled = false;
-            cancelButton.Visible = true;
+            view.SetBusy(true);
         }
 
         private void EndOperation()
@@ -837,7 +713,7 @@ namespace Doctracker.AddIn.UI
             operation.Dispose(); operation = null; context.IsBusy = false;
             if (IsDisposed) return;
             canvas.Enabled = documents.Enabled = searchResults.Enabled = true;
-            cancelButton.Visible = false;
+            view.SetBusy(false);
         }
 
         private Task<List<string>> IndexMissingAsync()
@@ -931,6 +807,7 @@ namespace Doctracker.AddIn.UI
         private string ChooseSnipId(ExcelInterop.Range target)
         {
             var ids = cells.GetSnipIds(target);
+            if (focusedSnipId != null && ids.Contains(focusedSnipId)) return focusedSnipId;
             if (ids.Count < 2) return ids.FirstOrDefault();
             using (var dialog = new Form { Text = "Choisir la preuve", Width = 540, Height = 260, StartPosition = FormStartPosition.CenterParent })
             using (var list = new ListBox { Dock = DockStyle.Fill, DisplayMember = "Caption" })
@@ -954,6 +831,12 @@ namespace Doctracker.AddIn.UI
                 ocr.Dispose();
             }
             base.Dispose(disposing);
+        }
+
+        private sealed class ProofItem
+        {
+            public string Id { get; set; }
+            public string Caption { get; set; }
         }
 
         private sealed class PendingWrite

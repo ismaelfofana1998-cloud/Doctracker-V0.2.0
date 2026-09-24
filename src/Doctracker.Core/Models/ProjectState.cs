@@ -82,6 +82,8 @@ namespace Doctracker.Core.Models
         public double Width { get; set; }
         public double Height { get; set; }
         public SnipType Type { get; set; }
+        // Capture tool, independent from a table cell's parsed value type. Absent in older projects.
+        public SnipType? SourceType { get; set; }
         public string RawText { get; set; } = string.Empty;
         public string ExtractedValue { get; set; } = string.Empty;
         public string WorksheetName { get; set; } = string.Empty;

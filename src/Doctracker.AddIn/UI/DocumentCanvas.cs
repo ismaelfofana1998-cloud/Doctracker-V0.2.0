@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
@@ -40,6 +42,13 @@ namespace Doctracker.AddIn.UI
         private Point panStart;
         private Point panOrigin;
         private RectangleF? normalizedSelection;
+        private readonly List<SnipRecord> proofs = new List<SnipRecord>();
+        private SnipType selectionType = SnipType.Text;
+        private string selectedProofId;
+        public SnipType? ActiveType { get; set; }
+        public void SetProofs(IEnumerable<SnipRecord> records)
+        { proofs.Clear(); proofs.AddRange(records); picture.Invalidate(); }
+
 
         public DocumentCanvas()
         {
@@ -48,20 +57,23 @@ namespace Doctracker.AddIn.UI
                      ControlStyles.OptimizedDoubleBuffer, true);
 
             Dock = DockStyle.Fill;
-            BackColor = Color.FromArgb(231, 235, 240);
+            AutoScaleMode = AutoScaleMode.Dpi;
+            AutoScaleDimensions = new SizeF(96,96);
+            BackColor = SnipTheme.Surface;
 
             var toolbar = new FlowLayoutPanel
             {
                 Dock = DockStyle.Top,
-                Height = 38,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
                 FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = false,
+                WrapContents = true,
                 Padding = new Padding(6, 5, 6, 4),
                 BackColor = Color.White
             };
 
-            previousButton = CreateToolbarButton("◀", "Page précédente");
-            nextButton = CreateToolbarButton("▶", "Page suivante");
+            previousButton = CreateToolbarButton("", "Page précédente", "Previous");
+            nextButton = CreateToolbarButton("", "Page suivante", "Next");
             pageLabel = new Label
             {
                 Text = "Aucun document",
@@ -69,9 +81,9 @@ namespace Doctracker.AddIn.UI
                 Padding = new Padding(8, 5, 8, 0),
                 ForeColor = Color.FromArgb(45, 53, 64)
             };
-            zoomOutButton = CreateToolbarButton("−", "Réduire le zoom");
-            fitButton = CreateToolbarButton("Adapter", "Adapter la page à la fenêtre");
-            zoomInButton = CreateToolbarButton("+", "Agrandir le zoom");
+            zoomOutButton = CreateToolbarButton("", "Réduire le zoom", "Minus");
+            fitButton = CreateToolbarButton("Adapter", "Adapter la page à la fenêtre", "Fit");
+            zoomInButton = CreateToolbarButton("", "Agrandir le zoom", "Plus");
             zoomLabel = new Label
             {
                 Text = "100 %",
@@ -98,12 +110,12 @@ namespace Doctracker.AddIn.UI
             {
                 Dock = DockStyle.Fill,
                 AutoScroll = true,
-                BackColor = Color.FromArgb(66, 74, 86),
+                BackColor = Color.FromArgb(235, 239, 245),
                 Padding = new Padding(12)
             };
             viewport.Resize += (sender, args) =>
             {
-                if (fitToViewport && currentImage != null) UpdatePictureLayout();
+                if (currentImage != null) UpdatePictureLayout();
             };
 
             picture = new PictureBox
@@ -136,6 +148,7 @@ namespace Doctracker.AddIn.UI
         public void LoadDocument(string path)
         {
             DisposeDocument();
+            proofs.Clear(); selectedProofId = null;
             if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
             {
                 throw new FileNotFoundException("The document cannot be found.", path);
@@ -172,9 +185,11 @@ namespace Doctracker.AddIn.UI
             }
 
             ShowPage(Math.Max(0, snip.PageNumber - 1));
+            selectionType = snip.SourceType ?? snip.Type;
+            selectedProofId = snip.Id;
             normalizedSelection = new RectangleF(
                 (float)snip.X, (float)snip.Y, (float)snip.Width, (float)snip.Height);
-            FitPage();
+            RevealSelection();
             picture.Invalidate();
         }
 
@@ -227,14 +242,16 @@ namespace Doctracker.AddIn.UI
         public void ClearSelection()
         {
             normalizedSelection = null;
+            selectedProofId = null;
             picture.Invalidate();
         }
 
         private void ShowPage(int requestedIndex)
         {
             var pageCount = pdf == null ? (currentPath == null ? 0 : imagePageCount) : pdf.PageCount;
-            if (requestedIndex < 0 || requestedIndex >= pageCount) return;
+            if (requestedIndex < 0 || requestedIndex >= pageCount || (requestedIndex == pageIndex && currentImage != null)) return;
             pageIndex = requestedIndex;
+            selectedProofId = null;
             normalizedSelection = null;
             RenderCurrentPage();
         }
@@ -293,6 +310,9 @@ namespace Doctracker.AddIn.UI
             var width = Math.Max(2, (int)Math.Round(currentImage.Width * zoom));
             var height = Math.Max(2, (int)Math.Round(currentImage.Height * zoom));
             picture.Size = new Size(width, height);
+            // Centre fitted pages; preserve the real scroll origin when zoomed in.
+            picture.Location = new Point(Math.Max(viewport.Padding.Left, (viewport.ClientSize.Width - width) / 2) + viewport.AutoScrollPosition.X,
+                viewport.Padding.Top + viewport.AutoScrollPosition.Y);
             picture.Image = currentImage;
             picture.Invalidate();
             zoomLabel.Text = Math.Round(zoom * 100d) + " %";
@@ -331,6 +351,8 @@ namespace Doctracker.AddIn.UI
             if (e.Button != MouseButtons.Left) return;
             picture.Capture = true;
             dragging = true;
+            selectionType = ActiveType ?? SnipType.Text;
+            selectedProofId = null;
             dragStart = Clamp(e.Location, picture.ClientRectangle);
             dragEnd = dragStart;
             normalizedSelection = null;
@@ -381,6 +403,12 @@ namespace Doctracker.AddIn.UI
 
         private void Picture_Paint(object sender, PaintEventArgs e)
         {
+            foreach (var proof in proofs.Where(item => item.PageNumber == CurrentPageNumber && item.Id != selectedProofId))
+            {
+                var bounds = new Rectangle((int)(proof.X * picture.Width), (int)(proof.Y * picture.Height),
+                    (int)(proof.Width * picture.Width), (int)(proof.Height * picture.Height));
+                DrawHighlight(e.Graphics, bounds, SnipTheme.ColorFor(proof.SourceType ?? proof.Type), false);
+            }
             Rectangle rectangle;
             if (dragging)
             {
@@ -400,13 +428,33 @@ namespace Doctracker.AddIn.UI
                 return;
             }
 
-            using (var fill = new SolidBrush(Color.FromArgb(45, 255, 122, 0)))
-            using (var pen = new Pen(Color.FromArgb(255, 122, 0), 2f))
+            DrawHighlight(e.Graphics, rectangle, SnipTheme.ColorFor(selectionType), true);
+        }
+
+        private static void DrawHighlight(Graphics graphics, Rectangle bounds, Color color, bool selected)
+        {
+            if (bounds.Width <= 0 || bounds.Height <= 0) return;
+            using (var fill = new SolidBrush(Color.FromArgb(selected ? 52 : 22, color)))
+            using (var pen = new Pen(color, selected ? 2.5f : 1f))
             {
-                pen.DashStyle = DashStyle.Dash;
-                e.Graphics.FillRectangle(fill, rectangle);
-                e.Graphics.DrawRectangle(pen, rectangle);
+                graphics.FillRectangle(fill, bounds);
+                graphics.DrawRectangle(pen, bounds);
+                if (selected)
+                    using (var handle = new SolidBrush(color))
+                    {
+                        graphics.FillRectangle(handle, bounds.Left - 3, bounds.Top - 3, 6, 6);
+                        graphics.FillRectangle(handle, bounds.Right - 3, bounds.Bottom - 3, 6, 6);
+                    }
             }
+        }
+
+        private void RevealSelection()
+        {
+            if (!normalizedSelection.HasValue || fitToViewport) return;
+            var zone = normalizedSelection.Value;
+            var x = (int)((zone.X + zone.Width / 2) * picture.Width) + viewport.Padding.Left;
+            var y = (int)((zone.Y + zone.Height / 2) * picture.Height) + viewport.Padding.Top;
+            viewport.AutoScrollPosition = new Point(Math.Max(0, x - viewport.ClientSize.Width / 2), Math.Max(0, y - viewport.ClientSize.Height / 2));
         }
 
         private void UpdateNavigationState()
@@ -419,19 +467,12 @@ namespace Doctracker.AddIn.UI
             zoomInButton.Enabled = currentImage != null;
         }
 
-        private static Button CreateToolbarButton(string text, string tooltip)
+        private static Button CreateToolbarButton(string text, string tooltip, string icon)
         {
-            var button = new Button
-            {
-                Text = text,
-                Width = text == "Adapter" ? 62 : 32,
-                Height = 27,
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(248, 249, 251),
-                TabStop = false
-            };
-            button.FlatAppearance.BorderColor = Color.FromArgb(214, 219, 226);
-            new ToolTip().SetToolTip(button, tooltip);
+            var button = SnipTheme.Button(text, icon);
+            button.AccessibleName = tooltip;
+            var tip = new ToolTip(); tip.SetToolTip(button, tooltip);
+            button.Disposed += (sender, args) => tip.Dispose();
             return button;
         }
 
@@ -461,6 +502,7 @@ namespace Doctracker.AddIn.UI
             pdf = null;
             currentPath = null;
             normalizedSelection = null;
+            selectedProofId = null; proofs.Clear();
             pageIndex = 0;
             zoomLabel.Text = "100 %";
             pageLabel.Text = "Aucun document";

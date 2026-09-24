@@ -32,7 +32,7 @@
     <UpdateEnabled>false</UpdateEnabled>
     <TargetCulture>fr-FR</TargetCulture>
     <FallbackCulture>en-US</FallbackCulture>
-    <ApplicationVersion>0.3.0.0</ApplicationVersion>
+    <ApplicationVersion>0.4.0.0</ApplicationVersion>
     <ApplicationRevision>0</ApplicationRevision>
     <BootstrapperEnabled>true</BootstrapperEnabled>
   </PropertyGroup>
@@ -110,6 +110,8 @@
     <Compile Include="Infrastructure\TesseractOcrEngine.cs" />
     <Compile Include="Infrastructure\DocumentIndexer.cs" />
     <Compile Include="Infrastructure\NativePdfiumLoader.cs" />
+    <Compile Include="UI\SnipTheme.cs" />
+    <Compile Include="UI\WorkspaceView.cs" />
     <Compile Include="UI\DocumentCanvas.cs" />
     <Compile Include="UI\DoctrackerPaneControl.cs" />
     <Compile Include="UI\PaneController.cs" />
