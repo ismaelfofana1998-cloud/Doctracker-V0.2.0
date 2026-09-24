@@ -10,10 +10,10 @@ namespace Doctracker.AddIn.UI
     // Excel-independent view: layout can be rendered and checked on Windows without COM.
     internal sealed class WorkspaceView : UserControl
     {
-        public readonly ComboBox Documents = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, DisplayMember = "OriginalName", FlatStyle = FlatStyle.Flat, Dock = DockStyle.Fill, IntegralHeight = false, DropDownHeight = 320, AccessibleName = "Document actif" };
+        public readonly ComboBox Documents = new EvidenceComboBox { DropDownStyle = ComboBoxStyle.DropDownList, DisplayMember = "OriginalName", FlatStyle = FlatStyle.Flat, Dock = DockStyle.Fill, IntegralHeight = false, DropDownHeight = 320, AccessibleName = "Document actif" };
         public readonly TextBox Query = new TextBox { Dock = DockStyle.Fill, BorderStyle = BorderStyle.FixedSingle, AccessibleName = "Rechercher dans les documents" };
         public readonly ListBox Results = new ListBox { Dock = DockStyle.Fill, BorderStyle = BorderStyle.None, IntegralHeight = false, DisplayMember = "Caption", HorizontalScrollbar = true, AccessibleName = "Résultats de recherche" };
-        public readonly ComboBox Proofs = new ComboBox { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList, DisplayMember = "Caption", FlatStyle = FlatStyle.Flat, AccessibleName = "Preuves de la cellule" };
+        public readonly ComboBox Proofs = new EvidenceComboBox { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList, DisplayMember = "Caption", FlatStyle = FlatStyle.Flat, AccessibleName = "Preuves de la cellule" };
         public readonly Label IndexState = Label("Aucune pièce");
         public readonly Label ModeState = Label("Choisissez un snip, puis dessinez une zone.");
         public readonly Label Status = Label("Prêt · Cliquez sur une cellule liée pour afficher sa preuve.");
@@ -107,4 +107,37 @@ namespace Doctracker.AddIn.UI
         { var row=table.RowCount++;table.RowStyles.Add(new RowStyle(sizing,height));table.Controls.Add(control,0,row); }
         protected override void Dispose(bool disposing) { if(disposing){menu.Dispose();tips.Dispose();}base.Dispose(disposing); }
     }
+    internal sealed class EvidenceComboBox : ComboBox
+    {
+        public EvidenceComboBox()
+        {
+            DrawMode=DrawMode.OwnerDrawFixed;
+            BackColor=Color.White; ForeColor=SnipTheme.Ink;
+            SizeItems();
+        }
+        protected override void OnFontChanged(EventArgs e)
+        {
+            base.OnFontChanged(e);
+            SizeItems();
+        }
+        private void SizeItems()
+        {
+            // Native edit/item height can remain cached after inherited font changes.
+            // Measure from the current font for both the closed field and the list.
+            ItemHeight=Math.Max(22,Font.Height+8);
+            Height=PreferredHeight;
+            Parent?.PerformLayout(this,"PreferredSize");
+        }
+        protected override void OnDrawItem(DrawItemEventArgs e)
+        {
+            var selected=(e.State & DrawItemState.Selected)!=0;
+            var edit=(e.State & DrawItemState.ComboBoxEdit)!=0;
+            using(var brush=new SolidBrush(selected && !edit ? SnipTheme.Surface : Color.White)) e.Graphics.FillRectangle(brush,e.Bounds);
+            if(e.Index<0 || e.Index>=Items.Count) return;
+            var bounds=e.Bounds; bounds.Inflate(-5,0);
+            TextRenderer.DrawText(e.Graphics,GetItemText(Items[e.Index]),Font,bounds,
+                Enabled ? SnipTheme.Ink : SnipTheme.Muted,TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.EndEllipsis|TextFormatFlags.NoPrefix);
+        }
+    }
+
 }

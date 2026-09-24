@@ -83,6 +83,7 @@ try {
             $screenshot.Dispose()
             foreach ($name in @('Documents','Query','Search','ModeState','Status','IndexState','Proofs')) {
                 $control=$viewType.GetField($name,$flags).GetValue($view)
+                if ($control -is [Windows.Forms.ComboBox] -and $control.ItemHeight -lt $control.Font.Height + 4) { throw "Native combo text clipped: $name" }
                 $preferred=$control.GetPreferredSize([Drawing.Size]::new($control.Width,0))
                 if ($control.Height + 2 -lt $preferred.Height) { throw "Clipped $name at $($scenario.Width) / $($scenario.Scale): $($control.Height) < $($preferred.Height)" }
                 if ($control.Right -gt $control.Parent.ClientSize.Width + 2) { throw "Horizontal overflow: $name" }

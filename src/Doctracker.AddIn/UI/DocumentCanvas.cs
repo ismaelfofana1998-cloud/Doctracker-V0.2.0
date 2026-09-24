@@ -309,6 +309,8 @@ namespace Doctracker.AddIn.UI
 
             var width = Math.Max(2, (int)Math.Round(currentImage.Width * zoom));
             var height = Math.Max(2, (int)Math.Round(currentImage.Height * zoom));
+            if (fitToViewport) viewport.AutoScrollPosition = Point.Empty;
+            viewport.AutoScrollMinSize = new Size(width + viewport.Padding.Horizontal, height + viewport.Padding.Vertical);
             picture.Size = new Size(width, height);
             // Centre fitted pages; preserve the real scroll origin when zoomed in.
             picture.Location = new Point(Math.Max(viewport.Padding.Left, (viewport.ClientSize.Width - width) / 2) + viewport.AutoScrollPosition.X,
