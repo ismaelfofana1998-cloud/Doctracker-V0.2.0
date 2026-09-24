@@ -80,7 +80,7 @@ namespace Doctracker.AddIn.Infrastructure
             var entry = new AuditEventRecord { Actor = Environment.UserName, Action = "DocumentIndexed",
                 EntityType = "Document", EntityId = document.Id, Details = pages.Count + " page(s)" };
             state.AuditTrail.Add(entry);
-            try { store.Save(state); document.ReleaseIndex(); }
+            try { store.Save(state, createRecoveryCheckpoint: false); document.ReleaseIndex(); }
             catch
             {
                 document.IndexedPages = oldPages; document.PageCount = oldCount;
@@ -108,7 +108,7 @@ namespace Doctracker.AddIn.Infrastructure
                     errors.Add(document.OriginalName + " : " + exception.Message);
                 }
             }
-            if (changed) store.Save(state);
+            if (changed) store.Save(state, createRecoveryCheckpoint: false);
             return errors;
         }
 

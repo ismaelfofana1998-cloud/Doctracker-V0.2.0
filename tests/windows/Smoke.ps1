@@ -226,7 +226,7 @@ try {
         '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 300] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
         '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'
     )
-    $stream = 'BT /F1 24 Tf 60 220 Td (FACTURE FA-001 TOTAL 1250.00) Tj ET'
+    $stream = 'BT /F1 24 Tf 60 220 Td (FACTURE FA-001 TOTAL 1250.00) Tj 0 -40 Td (REF FAC12345A) Tj 0 -40 Td [(5) 20 (0) 20 (0) 20 (X) 20 (3) 20 (0) 20 (0) 20 (Z) 20 (3) 20 (5)] TJ ET'
     $objects += "<< /Length $($stream.Length) >>`nstream`n$stream`nendstream"
     $pdfText = "%PDF-1.4`n"
     $offsets = [Collections.Generic.List[int]]::new()
@@ -254,11 +254,19 @@ try {
     $nativePage=$readPage.Invoke($null,[object[]]@($pdfPath.PSObject.BaseObject,1))
     if($document.IndexComplete -or $document.IndexKey -ne '' -or $nativePage.Text -notmatch 'FA-001' -or $nativePage.Words.Count -eq 0){throw 'First snip cannot use native PDF text before indexing.'}
 
+    $recoveryCount=@(Get-ChildItem (Join-Path $store.ProjectDirectory 'recovery') -Filter *.xml).Count
     $indexer.Index($state, $document, $null, [Threading.CancellationToken]::None, $false)
+    if(@(Get-ChildItem (Join-Path $store.ProjectDirectory 'recovery') -Filter *.xml).Count -ne $recoveryCount){throw 'Indexing created redundant recovery snapshots.'}
     if (!$document.IndexComplete -or $document.IndexedPages[0].Text -notmatch 'FA-001') { throw 'Native PDF index failed.' }
     $matcher = New-Object Doctracker.Core.Services.DocumentMatcher
     $hit = $matcher.Find($state, 'FA-001', 1)[0]
     if (!$hit.IsExact -or !$hit.HasLocation -or $hit.Y -gt .4 -or $hit.Y -lt .1) { throw 'Native PDF word position incorrect.' }
+    foreach($query in @('12345','X300','500X300Z35')) {
+        $literal=[Doctracker.Core.Services.OccurrenceSearch]::Find($state,$query,10,[Threading.CancellationToken]::None)
+        $matched=$matcher.Find($state,$query,10,$true,[Threading.CancellationToken]::None)
+        if($literal.Count -eq 0 -or !$literal[0].HasLocation -or $matched.Count -eq 0 -or !$matched[0].HasLocation){throw "Native embedded reference not found with position: $query"}
+    }
+    Write-Host 'PASS: native PDF embedded numeric references and split glyphs, shared search/matching, no redundant recovery copy'
     [IO.File]::WriteAllBytes($store.IndexPath($document.IndexKey),[byte[]]@(1,2,3))
     $freshStore=New-Object Doctracker.Core.Services.ProjectStore $store.ProjectDirectory
     $freshState=$freshStore.LoadOrCreate('')

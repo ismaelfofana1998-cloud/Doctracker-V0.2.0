@@ -17,7 +17,7 @@ namespace Doctracker.Core.Services
         {
             if (state == null) throw new ArgumentNullException(nameof(state));
             var result = new List<MatchCandidate>();
-            if (Normalize(query).Length == 0 || maximum <= 0) return result;
+            if ((partialReferences ? OccurrenceSearch.Normalize(query) : Normalize(query)).Length == 0 || maximum <= 0) return result;
             foreach(var document in state.Documents)
             {
                 try
@@ -25,7 +25,8 @@ namespace Doctracker.Core.Services
                     foreach(var page in document.IndexedPages)
                     {
                         cancellation.ThrowIfCancellationRequested();
-                        var candidate=Score(document,page,query,partialReferences);
+                        var prepared = partialReferences ? new OccurrenceSearch.PreparedPage(document,page,cancellation) : null;
+                        var candidate=Score(document,page,query,partialReferences,prepared,cancellation);
                         if(candidate.Score<=0)continue;
                         result.Add(candidate);
                         if(result.Count>maximum)result=result.OrderByDescending(c=>c.Score).ThenBy(c=>c.DocumentId).ThenBy(c=>c.PageNumber).Take(maximum).ToList();
@@ -51,6 +52,8 @@ namespace Doctracker.Core.Services
                     foreach(var page in document.IndexedPages)
                     {
                         cancellation.ThrowIfCancellationRequested();
+                        var prepared = partialReferences ? new OccurrenceSearch.PreparedPage(document,page,cancellation) : null;
+                        var cache = new Dictionary<string,MatchCandidate>(StringComparer.Ordinal);
                         for(var row=0;row<rows.Count;row++)
                         {
                             if(row%25==0)cancellation.ThrowIfCancellationRequested();
@@ -59,7 +62,12 @@ namespace Doctracker.Core.Services
                             var fields=new List<MatchCandidate>();var match=true;
                             foreach(var query in queries)
                             {
-                                var field=string.IsNullOrWhiteSpace(query)?null:Score(document,page,query,partialReferences);
+                                MatchCandidate field = null;
+                                if (!string.IsNullOrWhiteSpace(query) && !cache.TryGetValue(query,out field))
+                                {
+                                    field = Score(document,page,query,partialReferences,prepared,cancellation);
+                                    cache.Add(query,field);
+                                }
                                 fields.Add(field);
                                 if(field!=null && !field.IsExact && !(partialReferences && field.IsPartial)){match=false;break;}
                             }
@@ -73,7 +81,7 @@ namespace Doctracker.Core.Services
             return result.Select(x=>(IReadOnlyList<MatchCandidate>)x).ToArray();
         }
 
-        private MatchCandidate Score(DocumentRecord document, PageTextRecord page, string query, bool partialReferences)
+        private MatchCandidate Score(DocumentRecord document, PageTextRecord page, string query, bool partialReferences, OccurrenceSearch.PreparedPage prepared, CancellationToken cancellation)
         {
             var normalizedQuery = Normalize(query);
             var candidate = new MatchCandidate { DocumentId = document.Id, PageNumber = page.PageNumber };
@@ -81,6 +89,15 @@ namespace Doctracker.Core.Services
             var isAmount = parser.TryParseAmount(query, out amount) && !Regex.IsMatch(query.Trim(), @"^0\d");
             DateTime date;
             var isDate = TryDate(query, out date);
+            // A bare integer may be an invoice/BL identifier. Decimal/currency/signed
+            // values remain financial comparisons; free occurrence search is always literal.
+            var explicitAmount = isAmount && Regex.IsMatch(query, @"[.,+−()€$£]|^-|-$");
+            if (partialReferences && !isDate && !explicitAmount)
+            {
+                var hit = prepared.Find(OccurrenceSearch.SearchTerms(query),cancellation).FirstOrDefault();
+                return hit ?? candidate;
+            }
+
             Func<string, bool> exact = text =>
             {
                 if (isDate) { DateTime other; return TryDate(text, out other) && other == date; }
@@ -103,14 +120,7 @@ namespace Doctracker.Core.Services
                     return FindSourceText(text, normalizedQuery);
                 return null;
             };
-            var compactQuery = Compact(query);
-            var partialAllowed = partialReferences && !isDate && !isAmount && compactQuery.Length >= 3;
-            // Prefer a real word location. Never join words from different lines for amounts.
             var words = page.Words ?? new List<WordRecord>();
-            if(partialReferences && !isDate && !isAmount &&
-                !Compact(page.Text).Contains(compactQuery) &&
-                !Compact(string.Join(" ",words.Select(w=>w.Text))).Contains(compactQuery) &&
-                !Compact(document.OriginalName).Contains(compactQuery))return candidate;
             var maxWords = isAmount ? 6 : normalizedQuery.Split(' ').Length + 2;
             for(var count=1;count<=maxWords;count++)
             for(var start=0;start+count<=words.Count;start++)
@@ -120,9 +130,8 @@ namespace Doctracker.Core.Services
                 var value=string.Join(" ",selected.Select(word=>word.Text));
                 var evidence=contained(value);
                 var exactMatch=evidence!=null;
-                var partialMatch=!exactMatch && partialAllowed && Compact(value).Contains(compactQuery);
-                if(!exactMatch && !partialMatch)continue;
-                candidate.IsExact=exactMatch;candidate.IsPartial=partialMatch;candidate.Score=exactMatch?1:.9;
+                if(!exactMatch)continue;
+                candidate.IsExact=true;candidate.Score=1;
                 candidate.Evidence=evidence??value;candidate.HasLocation=true;
                 candidate.X=selected.Min(word=>word.X);candidate.Y=selected.Min(word=>word.Y);
                 candidate.Width=selected.Max(word=>word.X+word.Width)-candidate.X;
@@ -139,20 +148,6 @@ namespace Doctracker.Core.Services
             }
             else
             {
-                if(partialAllowed)
-                {
-                    foreach(var line in Regex.Split(textValue,@"\r?\n"))
-                    {
-                        var lineTokens=Regex.Split(line.Trim(),@"\s+");
-                        for(var length=1;length<=Math.Min(8,lineTokens.Length);length++)
-                        for(var i=0;i+length<=lineTokens.Length;i++)
-                        {
-                            var evidence=string.Join(" ",lineTokens.Skip(i).Take(length));
-                            if(!Compact(evidence).Contains(compactQuery))continue;
-                            candidate.Evidence=evidence;candidate.IsExact=exact(evidence);candidate.IsPartial=!candidate.IsExact;candidate.Score=candidate.IsExact?1:.9;return candidate;
-                        }
-                    }
-                }
                 if ((" " + Normalize(textValue) + " ").Contains(" " + normalizedQuery + " "))
                     return Exact(candidate, FindSourceText(textValue, normalizedQuery));
                 if ((" " + Normalize(System.IO.Path.GetFileNameWithoutExtension(document.OriginalName)) + " ")
@@ -190,8 +185,6 @@ namespace Doctracker.Core.Services
             try { date = TextValueParser.ParseDate(text); return true; }
             catch (FormatException) { return false; }
         }
-
-        private static string Compact(string text) => Normalize(text).Replace(" ", "");
 
         private static string Normalize(string text)
         {

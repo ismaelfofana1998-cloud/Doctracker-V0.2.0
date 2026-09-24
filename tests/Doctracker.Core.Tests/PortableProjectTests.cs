@@ -106,9 +106,9 @@ namespace Doctracker.Core.Tests
         {
             var store=Store("partial");var state=Fixture(store);var match=Assert.Single(new DocumentMatcher().FindAllFields(state,new[]{query},true));Assert.Contains("X300",match.Fields[0].Evidence);
         }
-        [Fact] public void Partial_matching_keeps_amounts_strict_and_rejects_ambiguity()
+        [Fact] public void Partial_matching_accepts_numeric_references_and_rejects_ambiguity()
         {
-            var store=Store("strict");var state=Fixture(store);var matcher=new DocumentMatcher();Assert.Empty(matcher.FindAllFields(state,new[]{"500"},true));
+            var store=Store("strict");var state=Fixture(store);var matcher=new DocumentMatcher();Assert.Single(matcher.FindAllFields(state,new[]{"500"},true));
             state.Documents.Add(new DocumentRecord {IndexedPages=new List<PageTextRecord>{new PageTextRecord {PageNumber=1,Text="500X300Z35"}}});Assert.Equal(2,matcher.FindAllFields(state,new[]{"X300"},true).Count);
         }
         [Fact] public void Batch_scans_each_lazy_index_once_and_preserves_cancellation()

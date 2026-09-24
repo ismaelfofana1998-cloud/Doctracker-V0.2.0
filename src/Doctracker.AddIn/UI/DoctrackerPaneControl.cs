@@ -354,7 +354,7 @@ namespace Doctracker.AddIn.UI
                 var truncated=results.Count>200;if(truncated)results=results.Take(200).ToList();
                 searchResults.DataSource = results;
                 view.ShowResults(results.Count);
-                SetStatus((results.Count==0 ? "Aucun résultat. Vérifiez le dossier ou utilisez Documents > Réindexer par OCR dans le ruban." : results.Count + " occurrence(s)."+(truncated?" Affichage limité à 200 : précisez la recherche.":"")) + (errors.Count > 0 ? " Attention : " + errors.Count + " pièce(s) non indexée(s)." : ""));
+                SetStatus((results.Count==0 ? "Aucune occurrence. Vérifiez le dossier sélectionné et le texte recherché." : results.Count + " occurrence(s)."+(truncated?" Affichage limité à 200 : précisez la recherche.":"")) + (errors.Count > 0 ? " Attention : " + errors.Count + " pièce(s) non indexée(s)." : ""));
             }
             catch (OperationCanceledException) { SetStatus("Recherche annulée."); }
             catch (Exception exception) { ShowError(exception); }

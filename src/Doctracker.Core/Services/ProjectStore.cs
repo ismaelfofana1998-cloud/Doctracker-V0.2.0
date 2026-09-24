@@ -83,7 +83,7 @@ namespace Doctracker.Core.Services
                 return state;
             }
         }
-        public void Save(ProjectState state)
+        public void Save(ProjectState state, bool createRecoveryCheckpoint = true)
         {
             if (state == null) throw new ArgumentNullException(nameof(state));
             lock (sync)
@@ -129,9 +129,12 @@ namespace Doctracker.Core.Services
                 var recovery = Path.Combine(ProjectDirectory, "recovery");
                 try
                 {
-                    Directory.CreateDirectory(recovery);
-                    File.Copy(MetadataPath, Path.Combine(recovery, DateTime.UtcNow.ToString("yyyyMMddHHmmssfffffff") + "-" + state.Revision + ".xml"));
-                    foreach (var old in Directory.GetFiles(recovery, "*.xml").OrderByDescending(x => x).Skip(20)) File.Delete(old);
+                    if (createRecoveryCheckpoint)
+                    {
+                        Directory.CreateDirectory(recovery);
+                        File.Copy(MetadataPath, Path.Combine(recovery, DateTime.UtcNow.ToString("yyyyMMddHHmmssfffffff") + "-" + state.Revision + ".xml"));
+                        foreach (var old in Directory.GetFiles(recovery, "*.xml").OrderByDescending(x => x).Skip(20)) File.Delete(old);
+                    }
                 }
                 catch (Exception failure) when (failure is IOException || failure is UnauthorizedAccessException) { /* project.xml and its previous version are already durable */ }
                 // Observers cannot turn a durable commit into a reported failure and trigger a false rollback.
