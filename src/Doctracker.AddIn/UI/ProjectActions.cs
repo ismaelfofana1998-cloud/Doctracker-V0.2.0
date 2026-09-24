@@ -175,7 +175,11 @@ namespace Doctracker.AddIn.UI
                         if(current>0 && CrossReferences.AvailableFor(context.State,reference.Text,doc.Id).Contains(current) && !available.Contains(current))available.Add(current);
                         list.DataSource=available.OrderBy(number=>number).ToList();if(available.Contains(current))list.SelectedItem=current;
                     };
-                    reference.Leave+=(s,e)=>refresh();refresh();
+                    reference.Leave+=(s,e)=>{
+                        try { refresh(); }
+                        catch(Exception failure) { list.DataSource=null;ShowError(failure); }
+                    };
+                    refresh();
                     var common=new CheckBox {Text="Réutiliser ce préfixe pour les prochaines Xref",Checked=true,Dock=DockStyle.Top,AutoSize=true};
                     var label=new Label {Text="Référence du test et numéro du document",Dock=DockStyle.Top,AutoSize=true};
                     var hint=new Label {Text="Les anciens numéros restent réservés pour préserver la traçabilité.",Dock=DockStyle.Top,AutoSize=true};
