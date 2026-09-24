@@ -96,7 +96,12 @@ namespace Doctracker.AddIn.UI
             button.FlatAppearance.BorderSize = 0;
             button.FlatAppearance.MouseOverBackColor = Surface;
             button.FlatAppearance.MouseDownBackColor = Color.FromArgb(225,232,244);
-            if(icon != null) { button.Image = Icon(icon,20,color); button.Disposed += (s,e)=>button.Image.Dispose(); }
+            if(icon != null)
+            {
+                Action refresh = () => { var old=button.Image; button.Image=Icon(icon,Math.Max(20,(int)Math.Ceiling(button.Font.Height*1.25)),color); old?.Dispose(); };
+                refresh(); button.FontChanged += (s,e)=>refresh();
+                button.Disposed += (s,e)=>button.Image.Dispose();
+            }
             return button;
         }
     }

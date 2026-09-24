@@ -1,4 +1,4 @@
-param([string]$BuildDirectory = "$PSScriptRoot\..\..\src\Doctracker.AddIn\bin\Release")
+﻿param([string]$BuildDirectory = "$PSScriptRoot\..\..\src\Doctracker.AddIn\bin\Release")
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path $BuildDirectory).Path
 Add-Type -AssemblyName System.Windows.Forms
@@ -46,7 +46,9 @@ try {
     [void][IO.Directory]::CreateDirectory($previewDirectory)
     $viewType = $assembly.GetType('Doctracker.AddIn.UI.WorkspaceView', $true)
     foreach ($scenario in @(@{Width=760;Height=850;Scale=1.0}, @{Width=420;Height=850;Scale=1.0}, @{Width=840;Height=1500;Scale=2.0})) {
-        $form = [Windows.Forms.Form]::new()
+        # A control host avoids the CI desktop's 768px window-height cap. This
+        # renders the requested physical size instead of silently shrinking a Form.
+        $form = [Windows.Forms.Panel]::new()
         $view = [Activator]::CreateInstance($viewType, $true)
         try {
             $form.ClientSize = [Drawing.Size]::new($scenario.Width,$scenario.Height)
@@ -64,7 +66,7 @@ try {
             $viewCanvas=$viewType.GetField('Canvas', $flags).GetValue($view)
             $viewCanvas.LoadDocument($imagePath)
             $viewCanvas.NavigateTo($imagePath,$snip)
-            $form.Show(); [Windows.Forms.Application]::DoEvents()
+            $form.CreateControl(); $view.CreateControl(); [Windows.Forms.Application]::DoEvents()
             if ($scenario.Scale -ne 1) {
                 # Simulate larger Windows text and geometry; actual Office per-monitor DPI remains a desktop check.
                 $view.Scale([Drawing.SizeF]::new($scenario.Scale,$scenario.Scale))
@@ -72,17 +74,18 @@ try {
                 $form.ClientSize=[Drawing.Size]::new($scenario.Width,$scenario.Height)
             }
             $view.PerformLayout(); [Windows.Forms.Application]::DoEvents()
+            $screenshot=[Drawing.Bitmap]::new($view.Width,$view.Height)
+            $view.DrawToBitmap($screenshot,[Drawing.Rectangle]::new(0,0,$view.Width,$view.Height))
+            $screenshot.Save((Join-Path $previewDirectory ("workspace-"+$scenario.Width+"-"+$scenario.Scale+".png")))
+            $screenshot.Dispose()
             foreach ($name in @('Documents','Query','Search','ModeState','Status','IndexState','Proofs')) {
                 $control=$viewType.GetField($name,$flags).GetValue($view)
                 $preferred=$control.GetPreferredSize([Drawing.Size]::new($control.Width,0))
                 if ($control.Height + 2 -lt $preferred.Height) { throw "Clipped $name at $($scenario.Width) / $($scenario.Scale): $($control.Height) < $($preferred.Height)" }
                 if ($control.Right -gt $control.Parent.ClientSize.Width + 2) { throw "Horizontal overflow: $name" }
             }
-            if ($viewCanvas.Height -lt 160) { throw 'Document area collapsed.' }
-            $screenshot=[Drawing.Bitmap]::new($view.Width,$view.Height)
-            $view.DrawToBitmap($screenshot,[Drawing.Rectangle]::new(0,0,$view.Width,$view.Height))
-            $screenshot.Save((Join-Path $previewDirectory ("workspace-"+$scenario.Width+"-"+$scenario.Scale+".png")))
-            $screenshot.Dispose()
+            if ($viewCanvas.Height -lt 160) { throw "Document area collapsed: $($viewCanvas.Height) at $($view.Width)x$($view.Height), scale $($scenario.Scale)" }
+
         } finally { $form.Dispose() }
     }
     Write-Host 'PASS: responsive workspace at 420/760 px, enlarged text, controls without vertical clipping, UI previews'
