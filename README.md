@@ -87,7 +87,7 @@ Un cache de travail et vingt versions des métadonnées restent sous
 une archive `.dtpack` complète : conservez-la ailleurs pour récupérer les pièces
 et liens si le classeur et son cache sont perdus. Les anciens dossiers adjacents
 sont migrés à l'ouverture ; conservez-les jusqu'à vérification de la migration.
-Utilisez ensuite la version 0.5, les versions antérieures ne comprenant pas le
+Utilisez ensuite la version 0.6, les versions antérieures ne comprenant pas le
 nouveau stockage. Aucun document n'est envoyé à un service OCR cloud.
 
 ## Portée réelle et validation

@@ -59,7 +59,7 @@ namespace Doctracker.AddIn.Infrastructure
                     try { if (document != null) document.Close(SaveChanges: 0); } catch { }
                     try { if (word != null) word.Quit(SaveChanges: 0); } catch { }
                     foreach (object item in new object[] { document, documents, options, word })
-                        if (item != null && Marshal.IsComObject(item)) Marshal.FinalReleaseComObject(item);
+                        if (item != null && Marshal.IsComObject(item)) try { Marshal.FinalReleaseComObject(item); } catch (InvalidComObjectException) { }
                 }
             }) { IsBackground = true, Name = "Doctracker Word conversion" };
             thread.SetApartmentState(ApartmentState.STA); thread.Start(); thread.Join();

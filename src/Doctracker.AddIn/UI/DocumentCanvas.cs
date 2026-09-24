@@ -144,9 +144,12 @@ namespace Doctracker.AddIn.UI
             picture.MouseUp += Picture_MouseUp;
             picture.Paint += Picture_Paint;
             picture.MouseEnter += (s,e) => viewport.Focus();
-            picture.MouseWheel += (s,e) => {
-                if ((ModifierKeys & Keys.Control) != 0) SetZoom(zoom * (e.Delta > 0 ? 1.15 : 1 / 1.15), false);
+            MouseEventHandler wheel = (s,e) => {
+                if ((ModifierKeys & Keys.Control) == 0) return;
+                SetZoom(zoom * (e.Delta > 0 ? 1.15 : 1 / 1.15), false);
+                if (e is HandledMouseEventArgs handled) handled.Handled = true;
             };
+            picture.MouseWheel += wheel; viewport.MouseWheel += wheel;
 
             viewport.Controls.Add(picture);
             Controls.Add(viewport);

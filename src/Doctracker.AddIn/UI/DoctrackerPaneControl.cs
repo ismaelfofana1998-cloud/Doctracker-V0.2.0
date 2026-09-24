@@ -612,7 +612,7 @@ namespace Doctracker.AddIn.UI
 
         private void BindDocuments()
         {
-            var visible=VisibleDocuments().OrderByDescending(d=>d.LastImportedAtUtc==default(DateTime)?d.AddedAtUtc:d.LastImportedAtUtc).ToList();
+            var visible=VisibleDocuments().Reverse().OrderByDescending(d=>d.LastImportedAtUtc==default(DateTime)?d.AddedAtUtc:d.LastImportedAtUtc).ToList();
             var selectedId = SelectedDocument?.Id;
             if(selectedId!=null && !visible.Any(d=>d.Id==selectedId))selectedId=null;
             var listChanged = documents.Items.Count != visible.Count ||

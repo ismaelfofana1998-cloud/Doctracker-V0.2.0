@@ -28,7 +28,14 @@ try {
     $canvas.LoadDocument($imagePath)
     # A tall page must fill the width instead of shrinking to the available height.
     $tallPath=Join-Path $temp 'portrait.png'
-    $tall=[Drawing.Bitmap]::new(1200,3600);$tall.Save($tallPath);$tall.Dispose()
+    $tall=[Drawing.Bitmap]::new(1200,3600)
+    $tallGraphics=[Drawing.Graphics]::FromImage($tall);$tallGraphics.Clear([Drawing.Color]::White)
+    $tallFont=[Drawing.Font]::new('Arial',32)
+    $tallGraphics.DrawString('FACTURE - DOCUMENT LONG', $tallFont, [Drawing.Brushes]::Black, 70, 130)
+    $tallGraphics.DrawString('Reference FA-2026-0142', $tallFont, [Drawing.Brushes]::Black, 70, 240)
+    $tallGraphics.DrawString('Client : exemple de controle', $tallFont, [Drawing.Brushes]::Black, 70, 350)
+    for($line=0;$line -lt 12;$line++) { $tallGraphics.DrawString(('Prestation '+($line+1)+'                          125,00'),$tallFont,[Drawing.Brushes]::Black,70,(560+$line*120)) }
+    $tallFont.Dispose();$tallGraphics.Dispose();$tall.Save($tallPath);$tall.Dispose()
     $canvas.LoadDocument($tallPath);$canvas.PerformLayout()
     $tallPicture=$type.GetField('picture',$flags).GetValue($canvas)
     if ($tallPicture.Width -lt 650 -or $tallPicture.Height -le 600) { throw 'Width fitting shrank a tall document to its height.' }
@@ -107,6 +114,11 @@ try {
             }
             $beforeReading=$viewCanvas.Height;$view.SetReadingMode($true);$view.PerformLayout();[Windows.Forms.Application]::DoEvents()
             if($viewCanvas.Height -le $beforeReading){throw 'Reading mode did not increase document area.'}
+            $viewCanvas.LoadDocument($tallPath);$viewCanvas.SetDocument($annotationDocument)
+            $view.PerformLayout();[Windows.Forms.Application]::DoEvents()
+            $readingPreview=[Drawing.Bitmap]::new($view.Width,$view.Height)
+            $view.DrawToBitmap($readingPreview,[Drawing.Rectangle]::new(0,0,$view.Width,$view.Height))
+            $readingPreview.Save((Join-Path $previewDirectory ("reading-"+$scenario.Width+"-"+$scenario.Scale+".png")));$readingPreview.Dispose()
             $view.SetReadingMode($false)
             if ($viewCanvas.Height -lt 160) { throw "Document area collapsed: $($viewCanvas.Height) at $($view.Width)x$($view.Height), scale $($scenario.Scale)" }
 

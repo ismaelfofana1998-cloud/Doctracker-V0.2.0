@@ -9,7 +9,7 @@ namespace Doctracker.AddIn.UI
     {
         public static RectangleF Bounds(DocumentComment comment, Size size) => new RectangleF((float)comment.X * size.Width,
             (float)comment.Y * size.Height, (float)comment.Width * size.Width, (float)comment.Height * size.Height);
-        public static float FontPixels(int width) => Math.Max(1f, width * .018f);
+        public static float FontPixels(int width) => Math.Max(1f, width * .027f);
         public static void Draw(Graphics graphics, Size size, DocumentRecord document, int page)
         {
             if (document == null || size.Width < 1 || size.Height < 1) return;
@@ -29,8 +29,8 @@ namespace Doctracker.AddIn.UI
                 if (page == 1 && !string.IsNullOrWhiteSpace(document.TestReference))
                 {
                     var label = document.TestReference + " / " + document.ReferenceNumber.ToString("D2");
-                    var box = new RectangleF(size.Width * .03f, size.Height * .012f, size.Width * .94f, size.Height * .08f);
-                    using (var font = new Font("Segoe UI", size.Width * .019f, FontStyle.Bold, GraphicsUnit.Pixel))
+                    var box = new RectangleF(size.Width * .03f, size.Height * .012f, size.Width * .94f, Math.Max(size.Height * .08f, size.Width * .08f));
+                    using (var font = new Font("Segoe UI", size.Width * .03f, FontStyle.Bold, GraphicsUnit.Pixel))
                     using (var format = new StringFormat { Alignment = StringAlignment.Far })
                         graphics.DrawString(label, font, red, box, format);
                 }

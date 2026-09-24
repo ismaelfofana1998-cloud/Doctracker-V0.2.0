@@ -42,6 +42,7 @@ namespace Doctracker.AddIn.UI
         private readonly TableLayoutPanel proofPanel;
         private readonly List<Control> secondary = new List<Control>();
         private bool readingMode;
+        private bool resultsBeforeReading;
         private bool commentMode;
         private readonly Label resultCount = Label("");
         private readonly FlowLayoutPanel modes;
@@ -120,7 +121,7 @@ namespace Doctracker.AddIn.UI
             Documents.FontChanged+=(s,e)=>sizeHeader();
             header.Layout+=(s,e)=>sizeHeader();
             sizeHeader();
-            Controls.Add(root); SizeTools();
+            Controls.Add(root); SizeTools();FontChanged+=(s,e)=>SizeTools();
             Resize+=(s,e)=> { var w=Math.Max(100,ClientSize.Width); ModeState.MaximumSize=new Size(w,0);Status.MaximumSize=new Size(w,0);IndexState.MaximumSize=new Size(Math.Max(100,w-155),0); modes.MaximumSize=new Size(w,0);SizeTools(); };
         }
         public void SetMode(SnipType? type)
@@ -146,6 +147,8 @@ namespace Doctracker.AddIn.UI
         }
         public void SetReadingMode(bool enabled)
         {
+            if(enabled && !readingMode)resultsBeforeReading=resultsPanel.Visible;
+            if(!enabled && readingMode)resultsPanel.Visible=resultsBeforeReading;
             readingMode=enabled;foreach(var control in secondary)control.Visible=!enabled;
             if(enabled)resultsPanel.Visible=false;
             ModeState.Visible=!enabled && (activeMode.HasValue || commentMode);
