@@ -149,13 +149,16 @@ try {
     $exportPath=Join-Path $temp 'annotated.pdf'
     $exportHost=Join-Path $root 'Doctracker.ExportSmoke.exe'
     $platform=if ([IntPtr]::Size -eq 4) { 'x86' } else { 'x64' }
-    $compiler=Join-Path $env:WINDIR 'Microsoft.NET/Framework/v4.0.30319/csc.exe'
+    $compiler=Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe'
+    $exportSource=(Resolve-Path (Join-Path $PSScriptRoot 'ExportSmoke.cs')).Path
+    $coreReference=Join-Path $root 'Doctracker.Core.dll'
     try {
-        & $compiler /nologo /target:exe "/platform:$platform" "/out:$exportHost" "/reference:$root/Doctracker.Core.dll" "$PSScriptRoot/ExportSmoke.cs"
+        & $compiler /nologo /target:exe "/platform:$platform" "/out:$exportHost" "/reference:$coreReference" $exportSource
         if ($LASTEXITCODE -ne 0) { throw 'Export smoke host compilation failed.' }
         Copy-Item (Join-Path $root 'Doctracker.AddIn.dll.config') ($exportHost+'.config')
         $invariant=[Globalization.CultureInfo]::InvariantCulture
-        & $exportHost $pdfPath $exportPath $hit.X.ToString($invariant) $hit.Y.ToString($invariant) $hit.Width.ToString($invariant) $hit.Height.ToString($invariant)
+        $coordinates=@($hit.X,$hit.Y,$hit.Width,$hit.Height) | ForEach-Object { $_.ToString($invariant) }
+        & $exportHost $pdfPath $exportPath @coordinates
         if ($LASTEXITCODE -ne 0) { throw 'Annotated export or its deployed dependency configuration failed.' }
     } finally {
         Remove-Item $exportHost,($exportHost+'.config') -ErrorAction SilentlyContinue
