@@ -18,7 +18,7 @@ namespace Doctracker.AddIn.Infrastructure
         private readonly IOcrEngine ocr;
         public DocumentIndexer(ProjectStore store, IOcrEngine ocr) { this.store = store; this.ocr = ocr; }
 
-        public void Index(ProjectState state, DocumentRecord document, Action<int, int> progress, CancellationToken cancellation)
+        public void Index(ProjectState state, DocumentRecord document, Action<int, int> progress, CancellationToken cancellation, bool forceOcr = false)
         {
             var path = store.ResolveDocumentPath(document);
             // Build separately: a failed/cancelled re-index must not erase the previous index.
@@ -33,7 +33,7 @@ namespace Doctracker.AddIn.Infrastructure
                         cancellation.ThrowIfCancellationRequested();
                         var native = pdf.GetPdfText(index);
                         PageTextRecord page;
-                        if (!string.IsNullOrWhiteSpace(native)) page = ReadNativePage(pdf, index, native);
+                        if (!forceOcr && !string.IsNullOrWhiteSpace(native)) page = ReadNativePage(pdf, index, native);
                         else
                         {
                             var size = RenderSize(pdf.PageSizes[index]);

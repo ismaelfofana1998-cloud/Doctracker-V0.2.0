@@ -48,6 +48,12 @@ namespace Doctracker.AddIn.UI
         private void Show(Action<DoctrackerPaneControl> action) => Run(entry =>
         { entry.Pane.Visible = true; entry.Control.RefreshProject(); action(entry.Control); });
         public void Toggle() => Run(entry => { entry.Pane.Visible = !entry.Pane.Visible; if (entry.Pane.Visible) entry.Control.RefreshProject(); });
+        public void ExecuteCommand(string command) => Show(control=>control.ExecuteCommand(command));
+        public bool CommandPressed(string command)
+        {
+            var window=application.ActiveWindow;WindowPane entry;
+            return window!=null && panes.TryGetValue(window.Hwnd,out entry) ? entry.Control.CommandPressed(command) : command=="PartialReferences";
+        }
         public void ImportDocuments() => Show(control => control.ImportDocuments());
         public void SetSnipMode(SnipType? type) => Show(control => control.SetSnipMode(type));
         public bool IsSnipMode(SnipType type)

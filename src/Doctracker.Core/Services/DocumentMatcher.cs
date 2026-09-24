@@ -88,12 +88,29 @@ namespace Doctracker.Core.Services
                 return Normalize(text) == normalizedQuery;
             };
 
+            // OCR/PDF engines can return a whole label and value as a single word box.
+            // Match an exact token inside that box, retaining its reliable location.
+            Func<string, string> contained = text => {
+                if (exact(text)) return text;
+                if (isAmount || isDate)
+                {
+                    var pattern = isDate ? @"(?<!\d)\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}(?!\d)" :
+                        @"(?<![\p{L}\d/.,-])\(?[-+−]?(?:\d{1,3}(?:[ \u00A0\u202F]\d{3}(?!\d))+|\d+)(?:[.,]\d+)*-?\)?(?![\p{L}\d/.,-])";
+                    foreach (Match match in Regex.Matches(text ?? "", pattern))
+                        if (exact(match.Value)) return match.Value;
+                }
+                else if ((" " + Normalize(text) + " ").Contains(" " + normalizedQuery + " "))
+                    return FindSourceText(text, normalizedQuery);
+                return null;
+            };
             var compactQuery = Compact(query);
             var partialAllowed = partialReferences && !isDate && !isAmount && compactQuery.Length >= 3;
-            // Reject impossible reference pages before scanning word windows.
-            if(partialReferences && !isDate && !isAmount && !Compact(page.Text).Contains(compactQuery) && !Compact(document.OriginalName).Contains(compactQuery)) return candidate;
             // Prefer a real word location. Never join words from different lines for amounts.
             var words = page.Words ?? new List<WordRecord>();
+            if(partialReferences && !isDate && !isAmount &&
+                !Compact(page.Text).Contains(compactQuery) &&
+                !Compact(string.Join(" ",words.Select(w=>w.Text))).Contains(compactQuery) &&
+                !Compact(document.OriginalName).Contains(compactQuery))return candidate;
             var maxWords = isAmount ? 6 : normalizedQuery.Split(' ').Length + 2;
             for(var count=1;count<=maxWords;count++)
             for(var start=0;start+count<=words.Count;start++)
@@ -101,11 +118,12 @@ namespace Doctracker.Core.Services
                 var selected=words.Skip(start).Take(count).ToList();
                 if(selected.Any(word=>word.Line!=selected[0].Line))continue;
                 var value=string.Join(" ",selected.Select(word=>word.Text));
-                var exactMatch=exact(value);
+                var evidence=contained(value);
+                var exactMatch=evidence!=null;
                 var partialMatch=!exactMatch && partialAllowed && Compact(value).Contains(compactQuery);
                 if(!exactMatch && !partialMatch)continue;
                 candidate.IsExact=exactMatch;candidate.IsPartial=partialMatch;candidate.Score=exactMatch?1:.9;
-                candidate.Evidence=value;candidate.HasLocation=true;
+                candidate.Evidence=evidence??value;candidate.HasLocation=true;
                 candidate.X=selected.Min(word=>word.X);candidate.Y=selected.Min(word=>word.Y);
                 candidate.Width=selected.Max(word=>word.X+word.Width)-candidate.X;
                 candidate.Height=selected.Max(word=>word.Y+word.Height)-candidate.Y;
@@ -114,16 +132,10 @@ namespace Doctracker.Core.Services
 
             // Legacy projects/native PDF pages may have plain text without word boxes.
             var textValue = page.Text ?? "";
-            if (isAmount)
+            if (isAmount || isDate)
             {
-                foreach (Match match in Regex.Matches(textValue,
-                    @"(?<![\p{L}\d/.-])\(?[-+−]?(?:\d{1,3}(?:[ \u00A0\u202F]\d{3}(?!\d))+|\d+)(?:[.,]\d+)*-?\)?(?![\p{L}\d/.-])"))
-                    if (exact(match.Value)) return Exact(candidate, match.Value);
-            }
-            else if (isDate)
-            {
-                foreach (Match match in Regex.Matches(textValue, @"(?<!\d)\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}(?!\d)"))
-                    if (exact(match.Value)) return Exact(candidate, match.Value);
+                var evidence = contained(textValue);
+                if (evidence != null) return Exact(candidate, evidence);
             }
             else
             {

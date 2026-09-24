@@ -19,8 +19,25 @@ namespace Doctracker.AddIn.Ribbon
       <tab id='DoctrackerTab' label='Doctracker'>
         <group id='ProjectGroup' label='Dossier'>
           <button id='OpenPane' getImage='GetImage' label='Ouvrir Doctracker' size='large' onAction='OpenPane_OnAction'/>
-          <button id='ImportDocuments' getImage='GetImage' label='Ajouter des pièces' onAction='ImportDocuments_OnAction'/>
-          <button id='SearchDocuments' getImage='GetImage' label='Rechercher' size='large' onAction='Search_OnAction'/>
+          <button id='ImportDocuments' getImage='GetImage' label='Importer' size='large' onAction='ImportDocuments_OnAction'/>
+          <button id='CrossReference' getImage='GetImage' label='Xref' size='large' onAction='Command_OnAction'/>
+          <button id='ExportPdf' getImage='GetImage' label='Exporter' size='large' onAction='Command_OnAction'/>
+          <menu id='DocumentsMenu' label='Documents' getImage='GetImage'>
+            <button id='ImportFolder' label='Importer un dossier…' onAction='Command_OnAction'/>
+            <button id='Categorize' label='Catégoriser…' onAction='Command_OnAction'/>
+            <button id='TestReference' label='Référence du test…' onAction='Command_OnAction'/>
+            <button id='Reindex' label='Réindexer tous les documents' onAction='Command_OnAction'/>
+            <button id='ReindexOcr' label='Réindexer le document actif par OCR' onAction='Command_OnAction'/>
+            <button id='Remove' label='Retirer le document actif' onAction='Command_OnAction'/>
+          </menu>
+          <menu id='RecoveryMenu' label='Récupération' getImage='GetImage'>
+            <button id='Backup' label='Sauvegarder les pièces et liens…' onAction='Command_OnAction'/>
+            <button id='Restore' label='Restaurer une sauvegarde…' onAction='Command_OnAction'/>
+            <button id='RepairLinks' label='Réparer les liens' onAction='Command_OnAction'/>
+            <button id='RecoveryFolder' label='Sauvegardes automatiques' onAction='Command_OnAction'/>
+            <button id='SharedStorage' label='Stockage autonome / partagé…' onAction='Command_OnAction'/>
+          </menu>
+          <button id='SearchDocuments'  getImage='GetImage' label='Rechercher la cellule' onAction='Search_OnAction'/>
         </group>
         <group id='SnipGroup' label='Snips'>
           <toggleButton id='ValidationSnip' getImage='GetImage' label='Validation' onAction='ValidationSnip_OnAction' getPressed='ValidationSnip_GetPressed' size='large'/>
@@ -30,9 +47,12 @@ namespace Doctracker.AddIn.Ribbon
           <toggleButton id='DateSnip' getImage='GetImage' label='Date' onAction='DateSnip_OnAction' getPressed='DateSnip_GetPressed' size='large'/>
           <toggleButton id='SumSnip' getImage='GetImage' label='Somme' onAction='SumSnip_OnAction' getPressed='SumSnip_GetPressed' size='large'/>
           <toggleButton id='TableSnip' getImage='GetImage' label='Tableau' onAction='TableSnip_OnAction' getPressed='TableSnip_GetPressed' size='large'/>
+          <toggleButton id='Comment' getImage='GetImage' label='Commentaire' size='large' onAction='Comment_OnAction' getPressed='Comment_GetPressed'/>
+          <button id='DeleteSnip' getImage='GetImage' label='Supprimer un snip' onAction='Command_OnAction'/>
         </group>
-        <group id='MatchingGroup' label='Contrôle'>
-          <button id='SetMatchInput' getImage='GetImage' label='Définir recherche' onAction='SetMatchInput_OnAction'/>
+        <group id='MatchingGroup'  label='Contrôle'>
+          <checkBox id='PartialReferences' label='Références contenues' onAction='Partial_OnAction' getPressed='Partial_GetPressed'/>
+          <button id='SetMatchInput'  getImage='GetImage' label='Définir recherche' onAction='SetMatchInput_OnAction'/>
           <button id='SetMatchOutput' getImage='GetImage' label='Définir résultat' onAction='SetMatchOutput_OnAction'/>
           <button id='Match' getImage='GetImage' label='Lancer le matching' size='large' onAction='Match_OnAction'/>
           <button id='OpenProof' getImage='GetImage' label='Ouvrir la preuve' onAction='OpenProof_OnAction'/>
@@ -79,6 +99,11 @@ namespace Doctracker.AddIn.Ribbon
 
         public void OpenPane_OnAction(IRibbonControl control) => Controller.Toggle();
         public void ImportDocuments_OnAction(IRibbonControl control) => Controller.ImportDocuments();
+        public void Command_OnAction(IRibbonControl control) { Controller.ExecuteCommand(control.Id); Refresh(); }
+        public void Comment_OnAction(IRibbonControl control,bool pressed) { Controller.ExecuteCommand("Comment"); Refresh(); }
+        public bool Comment_GetPressed(IRibbonControl control) => Globals.ThisAddIn?.Controller?.CommandPressed("Comment") ?? false;
+        public void Partial_OnAction(IRibbonControl control,bool pressed) { Controller.ExecuteCommand("PartialReferences"); Refresh(); }
+        public bool Partial_GetPressed(IRibbonControl control) => Globals.ThisAddIn?.Controller?.CommandPressed("PartialReferences") ?? true;
         public void Search_OnAction(IRibbonControl control) => Controller.SearchSelection();
 
         public void ValidationSnip_OnAction(IRibbonControl control, bool pressed) => SetSnipMode(SnipType.Validation, pressed);
@@ -106,6 +131,7 @@ namespace Doctracker.AddIn.Ribbon
         private void SetSnipMode(SnipType type, bool pressed)
         {
             Controller.SetSnipMode(pressed ? type : (SnipType?)null);
+            ribbon?.InvalidateControl("Comment");
             ribbon?.InvalidateControl("ValidationSnip");
             ribbon?.InvalidateControl("ExceptionSnip");
             ribbon?.InvalidateControl("TextSnip");

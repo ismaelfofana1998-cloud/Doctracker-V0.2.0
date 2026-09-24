@@ -178,8 +178,8 @@ namespace Doctracker.Core.Services
         }
         private static void NormalizeState(ProjectState state)
         {
-            if (state == null || state.SchemaVersion > 4) throw new InvalidDataException("Projet invalide ou version plus récente requise.");
-            var legacy = state.SchemaVersion < 2; state.SchemaVersion = 4;
+            if (state == null || state.SchemaVersion > 5) throw new InvalidDataException("Projet invalide ou version plus récente requise.");
+            var legacy = state.SchemaVersion < 2; state.SchemaVersion = 5;
             state.CellLinks = state.CellLinks ?? new List<CellLinkRecord>();
             state.Documents = state.Documents ?? new List<DocumentRecord>(); state.Snips = state.Snips ?? new List<SnipRecord>();
             state.AuditTrail = state.AuditTrail ?? new List<AuditEventRecord>(); state.XrefReservations = state.XrefReservations ?? new List<XrefReservation>();
@@ -188,6 +188,11 @@ namespace Doctracker.Core.Services
                 document.Categories = document.Categories ?? new List<string>();
                 document.Comments = document.Comments ?? new List<DocumentComment>();
                 if (legacy) document.IndexComplete = document.PageCount > 0 && document.IndexedPages.Count == document.PageCount;
+            }
+            if (string.IsNullOrWhiteSpace(state.TestReference))
+            {
+                var references = state.Documents.Select(d => d.TestReference).Where(r => !string.IsNullOrWhiteSpace(r)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                if (references.Count == 1) state.TestReference = references[0];
             }
             if (state.Documents.Select(d => d.Id).Distinct().Count() != state.Documents.Count || state.Snips.Select(s => s.Id).Distinct().Count() != state.Snips.Count)
                 throw new InvalidDataException("Identifiants de preuves ou pièces en double.");

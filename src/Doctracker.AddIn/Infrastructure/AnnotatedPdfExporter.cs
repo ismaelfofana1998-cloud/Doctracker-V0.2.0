@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading;
 using Doctracker.AddIn.UI;
 using Doctracker.Core.Models;
+using Doctracker.Core.Services;
 using PdfSharp.Drawing;
 
 namespace Doctracker.AddIn.Infrastructure
@@ -60,7 +61,7 @@ namespace Doctracker.AddIn.Infrastructure
                     var rect=new RectangleF((float)snip.X*bitmap.Width,(float)snip.Y*bitmap.Height,(float)snip.Width*bitmap.Width,(float)snip.Height*bitmap.Height);
                     using(var fill=new SolidBrush(Color.FromArgb(35,color)))using(var pen=new Pen(color,Math.Max(2,bitmap.Width/600f)))
                     {graphics.FillRectangle(fill,rect);graphics.DrawRectangle(pen,rect.X,rect.Y,rect.Width,rect.Height);}
-                    var label=(string.IsNullOrEmpty(document.TestReference)?"":document.TestReference+" / "+document.ReferenceNumber.ToString("D2")+" · ")+snip.WorksheetName+"!"+snip.CellAddress;
+                    var label=CrossReferences.SnipLabel(document,snip);
                     var labelSize=graphics.MeasureString(label,font);var x=Math.Max(0,Math.Min(rect.Left,bitmap.Width-labelSize.Width));var y=Math.Max(0,rect.Top-labelSize.Height);
                     graphics.FillRectangle(Brushes.White,x,y,labelSize.Width,labelSize.Height);using(var brush=new SolidBrush(color))graphics.DrawString(label,font,brush,x,y);
                 }

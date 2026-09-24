@@ -53,6 +53,10 @@ namespace Doctracker.AddIn.UI
                 g.ScaleTransform(size / 24f, size / 24f);
                 switch (key)
                 {
+                    case "CrossReference":
+                        g.DrawEllipse(pen,3,5,11,7);g.DrawEllipse(pen,10,12,11,7);g.DrawLine(pen,9,9,15,15);break;
+                    case "ExportPdf":
+                        g.DrawRectangle(pen,4,3,11,18);g.DrawLine(pen,10,12,22,12);g.DrawLines(pen,new[]{new PointF(18,8),new PointF(22,12),new PointF(18,16)});break;
                     case "Comment":
                         g.DrawRectangle(pen,3,4,18,13);g.DrawLines(pen,new[]{new PointF(7,17),new PointF(7,21),new PointF(12,17)});g.DrawLine(pen,7,8,17,8);g.DrawLine(pen,7,12,14,12);break;
                     case "Delete":

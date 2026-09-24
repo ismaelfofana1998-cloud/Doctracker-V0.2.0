@@ -1,11 +1,11 @@
-# Doctracker 0.6.0 — complément Excel Windows
+# Doctracker 0.7.0 — complément Excel Windows
 
 Doctracker importe des PDF et images, les classe par catégories et intègre les pièces
 au classeur Excel, ou les référence dans un emplacement réseau partagé. Il permet
 de sélectionner des zones, extraire leur contenu dans Excel, associer plusieurs
 preuves à une cellule et revenir à la source pour la revue.
 
-Voir [les ajouts 0.6 : édition, Word et lecture](docs/EDITION_0.6.md) et [le guide 0.5 : partage, catégories, Xref et récupération](docs/PORTABILITE_0.5.md).
+Voir [les améliorations 0.7 : espace, recherche et annotations](docs/ERGONOMIE_0.7.md), [les ajouts 0.6 : édition, Word et lecture](docs/EDITION_0.6.md) et [le guide 0.5 : partage, catégories, Xref et récupération](docs/PORTABILITE_0.5.md).
 
 ## Installer et utiliser
 
@@ -39,7 +39,7 @@ Un déploiement permanent en cabinet nécessite une signature de production.
 | Date | Date Excel, avec prise en compte des classeurs utilisant le calendrier 1904 |
 | Somme | Somme de la zone ; les sélections suivantes s'ajoutent dans la même cellule avec leurs propres preuves |
 | Tableau | Aperçu modifiable construit à partir des positions des mots, puis insertion et preuve par cellule |
-| Validation / Exception | Ajout d'une preuve colorée sans remplacer la valeur de la cellule |
+| Validation / Exception | Preuve colorée ; libellé Validation/Exception dans une cellule vide, valeur ou formule existante conservée |
 
 Texte, Nombre, Date et Tableau avancent vers la ligne suivante après insertion.
 Validation, Exception et Somme restent sur la même cellule. Une insertion qui
@@ -87,7 +87,7 @@ Un cache de travail et vingt versions des métadonnées restent sous
 une archive `.dtpack` complète : conservez-la ailleurs pour récupérer les pièces
 et liens si le classeur et son cache sont perdus. Les anciens dossiers adjacents
 sont migrés à l'ouverture ; conservez-les jusqu'à vérification de la migration.
-Utilisez ensuite la version 0.6, les versions antérieures ne comprenant pas le
+Utilisez ensuite la version 0.7, les versions antérieures ne comprenant pas le
 nouveau stockage. Aucun document n'est envoyé à un service OCR cloud.
 
 ## Portée réelle et validation

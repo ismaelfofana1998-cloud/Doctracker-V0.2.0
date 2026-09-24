@@ -15,12 +15,6 @@ namespace Doctracker.AddIn.UI
     {
         private void WireAnnotationActions()
         {
-            view.Comment.Click += (s,e) => {
-                if(context.IsBusy)return;
-                activeSnipType=null;view.SetReadingMode(false);view.SetCommentMode(!canvas.CommentMode);
-                Ribbon.DoctrackerRibbon.Instance?.Refresh();
-                SetStatus(canvas.CommentMode ? "Dessinez le cadre du commentaire sur le document." : "Commentaire désactivé.");
-            };
             view.DeleteSnip.Click += (s,e) => DeleteSnip(focusedSnipId);
             view.DeleteSnipMenu.Click += (s,e) => DeleteSnip(focusedSnipId);
             canvas.DeleteProofRequested += DeleteSnip;
@@ -32,20 +26,92 @@ namespace Doctracker.AddIn.UI
                 bindingProofs=true;
                 try { view.Proofs.DataSource=new[]{new ProofItem {Id=id,Caption=SnipTheme.LabelFor(snip.SourceType??snip.Type)+" · "+snip.WorksheetName+"!"+snip.CellAddress}};view.ShowProofs(true); }
                 finally {bindingProofs=false;}
+                NavigateToLinkedCell(snip);
             };
         }
-        private string CommentText(string text)
+        private void ToggleComment()
         {
-            using(var dialog=new Form {Text="Commentaire sur le document",ClientSize=new Size(480,250),MinimumSize=new Size(360,220),
+            if(context.IsBusy)return;
+            activeSnipType=null;view.SetReadingMode(false);view.SetCommentMode(!canvas.CommentMode);
+            Ribbon.DoctrackerRibbon.Instance?.Refresh();
+            SetStatus(canvas.CommentMode ? "Dessinez le cadre du commentaire sur le document." : "Commentaire désactivé.");
+        }
+        private void NavigateToLinkedCell(SnipRecord snip)
+        {
+            var events=application.EnableEvents;
+            try
+            {
+                EnsureActiveWorkbook();
+                // Validate the live marker: recorded addresses can be stale after row moves.
+                var current=application.Selection as ExcelInterop.Range;
+                if(current!=null && current.Cells.CountLarge==1 && cells.GetSnipIds(current).Contains(snip.Id))return;
+                ExcelInterop.Range target=null;
+                foreach(ExcelInterop.Worksheet sheet in workbook.Worksheets)
+                {
+                    if(sheet.Name!=snip.WorksheetName)continue;
+                    var recorded=sheet.Range[snip.CellAddress];
+                    if(recorded.Cells.CountLarge==1 && cells.GetSnipIds(recorded).Contains(snip.Id))target=recorded;
+                }
+                if(target==null)
+                {
+                    foreach(ExcelInterop.Worksheet sheet in workbook.Worksheets)
+                    {
+                        ExcelInterop.Range linked;
+                        try{linked=sheet.Cells.SpecialCells(ExcelInterop.XlCellType.xlCellTypeComments);}
+                        catch(System.Runtime.InteropServices.COMException){continue;}
+                        foreach(ExcelInterop.Range cell in linked.Cells)
+                            if(cells.GetSnipIds(cell).Contains(snip.Id)){target=cell;break;}
+                        if(target!=null)break;
+                    }
+                }
+                if(target==null)throw new InvalidOperationException("La cellule liée est introuvable. Utilisez Récupération > Réparer les liens dans le ruban.");
+                if(target.Worksheet.Visible!=ExcelInterop.XlSheetVisibility.xlSheetVisible)
+                    throw new InvalidOperationException("La preuve est liée à une feuille masquée : "+target.Worksheet.Name+". Affichez cette feuille pour y accéder.");
+                application.EnableEvents=false;application.Goto(target,true);
+                SetStatus("Cellule liée : "+target.Worksheet.Name+"!"+target.Address[false,false]);
+            }
+            catch(Exception exception){ShowError(exception);}
+            finally{application.EnableEvents=events;}
+        }
+        private DocumentComment CommentProperties(DocumentComment original)
+        {
+            using(var dialog=new Form {Text="Commentaire : texte et dimensions",ClientSize=new Size(520,330),MinimumSize=new Size(460,300),
                 StartPosition=FormStartPosition.CenterParent,Font=new Font("Segoe UI",10),Padding=new Padding(12),MinimizeBox=false,MaximizeBox=false})
             {
-                var input=new TextBox {Text=text,Multiline=true,AcceptsReturn=true,ScrollBars=ScrollBars.Vertical,Dock=DockStyle.Fill,MaxLength=2000,ForeColor=Color.Red};
+                var input=new TextBox {Text=original.Text,Multiline=true,AcceptsReturn=true,ScrollBars=ScrollBars.Vertical,Dock=DockStyle.Fill,MaxLength=2000,ForeColor=Color.Red};
+                var settings=new FlowLayoutPanel {Dock=DockStyle.Top,AutoSize=true,WrapContents=true,Padding=new Padding(0,0,0,8)};
+                var fontSize=new NumericUpDown {Minimum=6,Maximum=72,Value=(decimal)Math.Max(6,Math.Min(72,original.FontSize)),Width=64};
+                var width=new NumericUpDown {Minimum=1,Maximum=(decimal)Math.Max(1,Math.Floor((1-original.X)*100)),DecimalPlaces=1,Width=70};
+                var height=new NumericUpDown {Minimum=1,Maximum=(decimal)Math.Max(1,Math.Floor((1-original.Y)*100)),DecimalPlaces=1,Width=70};
+                width.Value=Math.Min(width.Maximum,Math.Max(1,(decimal)original.Width*100));height.Value=Math.Min(height.Maximum,Math.Max(1,(decimal)original.Height*100));
+                settings.Controls.Add(new Label {Text="Texte (pt)",AutoSize=true});settings.Controls.Add(fontSize);
+                settings.Controls.Add(new Label {Text="Largeur (%)",AutoSize=true});settings.Controls.Add(width);
+                settings.Controls.Add(new Label {Text="Hauteur (%)",AutoSize=true});settings.Controls.Add(height);
                 var footer=new FlowLayoutPanel {Dock=DockStyle.Bottom,AutoSize=true,FlowDirection=FlowDirection.RightToLeft};
                 var ok=new Button {Text="Enregistrer",AutoSize=true,DialogResult=DialogResult.OK};
                 var cancel=new Button {Text="Annuler",AutoSize=true,DialogResult=DialogResult.Cancel};
-                footer.Controls.Add(ok);footer.Controls.Add(cancel);dialog.Controls.Add(input);dialog.Controls.Add(footer);dialog.CancelButton=cancel;
-                dialog.Shown+=(s,e)=>input.Focus();
-                return dialog.ShowDialog(this)==DialogResult.OK ? input.Text : null;
+                footer.Controls.Add(ok);footer.Controls.Add(cancel);dialog.Controls.Add(input);dialog.Controls.Add(settings);dialog.Controls.Add(footer);dialog.CancelButton=cancel;
+                Font previewFont=null;
+                Action updateFont=()=>{var old=previewFont;previewFont=new Font("Segoe UI",(float)fontSize.Value);input.Font=previewFont;old?.Dispose();};
+                fontSize.ValueChanged+=(s,e)=>updateFont();updateFont();dialog.Shown+=(s,e)=>input.Focus();
+                dialog.FormClosing+=(s,e)=>{
+                    if(dialog.DialogResult!=DialogResult.OK)return;
+                    try
+                    {
+                        if(string.IsNullOrWhiteSpace(input.Text))throw new InvalidOperationException("Saisissez le texte du commentaire.");
+                        var fitted=canvas.FitComment(new RectangleF((float)original.X,(float)original.Y,(float)width.Value/100,(float)height.Value/100),input.Text,(double)fontSize.Value);
+                        // FitComment expands the height as needed; the saved frame includes all text.
+                        height.Value=Math.Min(height.Maximum,Math.Max(height.Minimum,(decimal)fitted.Height*100));
+                    }
+                    catch(Exception exception){e.Cancel=true;MessageBox.Show(dialog,exception.Message,"Commentaire",MessageBoxButtons.OK,MessageBoxIcon.Information);}
+                };
+                try
+                {
+                    if(dialog.ShowDialog(this)!=DialogResult.OK)return null;
+                    return new DocumentComment {Id=original.Id,PageNumber=original.PageNumber,X=original.X,Y=original.Y,
+                        Width=(double)width.Value/100,Height=(double)height.Value/100,FontSize=(double)fontSize.Value,Text=input.Text};
+                }
+                finally{input.Font=dialog.Font;previewFont?.Dispose();}
             }
         }
         private void CreateDocumentComment()
@@ -53,10 +119,11 @@ namespace Doctracker.AddIn.UI
             try
             {
                 EnsureProject();var doc=SelectedDocument;if(doc==null||!canvas.HasSelection)return;
-                var text=CommentText("");if(text==null)return;
-                var zone=canvas.FitComment(canvas.GetNormalizedSelection(),text);
+                var selected=canvas.GetNormalizedSelection();
+                var edited=CommentProperties(new DocumentComment {X=selected.X,Y=selected.Y,Width=selected.Width,Height=selected.Height});if(edited==null)return;
+                var zone=canvas.FitComment(new RectangleF((float)edited.X,(float)edited.Y,(float)edited.Width,(float)edited.Height),edited.Text,edited.FontSize);
                 new DocumentCommentService(context.Store).Save(context.State,doc.Id,canvas.CurrentPageNumber,
-                    new NormalizedRectangle(zone.X,zone.Y,zone.Width,zone.Height),text);
+                    new NormalizedRectangle(zone.X,zone.Y,zone.Width,zone.Height),edited.Text,fontSize:edited.FontSize);
                 canvas.ClearSelection();UpdateDocumentProofs();context.MarkWorkbookDirty();SetStatus("Commentaire ajouté. Clic droit sur le cadre pour le modifier ou le supprimer.");
             }
             catch(Exception exception){ShowError(exception);}
@@ -67,10 +134,10 @@ namespace Doctracker.AddIn.UI
             try
             {
                 EnsureProject();var doc=SelectedDocument;var comment=doc?.Comments.FirstOrDefault(c=>c.Id==id);if(comment==null)return;
-                var text=CommentText(comment.Text);if(text==null)return;
-                var zone=canvas.FitComment(new RectangleF((float)comment.X,(float)comment.Y,(float)comment.Width,(float)comment.Height),text);
+                var edited=CommentProperties(comment);if(edited==null)return;
+                var zone=canvas.FitComment(new RectangleF((float)edited.X,(float)edited.Y,(float)edited.Width,(float)edited.Height),edited.Text,edited.FontSize);
                 new DocumentCommentService(context.Store).Save(context.State,doc.Id,comment.PageNumber,
-                    new NormalizedRectangle(zone.X,zone.Y,zone.Width,zone.Height),text,id);
+                    new NormalizedRectangle(zone.X,zone.Y,zone.Width,zone.Height),edited.Text,id,edited.FontSize);
                 UpdateDocumentProofs();context.MarkWorkbookDirty();SetStatus("Commentaire enregistré.");
             }
             catch(Exception exception){ShowError(exception);}

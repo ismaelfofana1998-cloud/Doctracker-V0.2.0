@@ -9,13 +9,14 @@ namespace Doctracker.Core.Models
     public sealed class ProjectState
     {
         [XmlAttribute]
-        public int SchemaVersion { get; set; } = 4;
+        public int SchemaVersion { get; set; } = 5;
 
         public string ProjectId { get; set; } = Guid.NewGuid().ToString("N");
         public List<CellLinkRecord> CellLinks { get; set; } = new List<CellLinkRecord>();
         public string SharedVaultPath { get; set; } = string.Empty;
         public string Revision { get; set; } = Guid.NewGuid().ToString("N");
         public List<XrefReservation> XrefReservations { get; set; } = new List<XrefReservation>();
+        public string TestReference { get; set; } = string.Empty;
         public string WorkbookPath { get; set; } = string.Empty;
         public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
         public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
@@ -89,6 +90,8 @@ namespace Doctracker.Core.Models
     [Serializable]
     public sealed class DocumentComment
     {
+        // Font size in points on a reference page 595 points wide (A4).
+        public double FontSize { get; set; } = 16;
         public string Id { get; set; } = Guid.NewGuid().ToString("N");
         public int PageNumber { get; set; }
         public double X { get; set; }

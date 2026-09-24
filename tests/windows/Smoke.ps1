@@ -102,16 +102,20 @@ try {
             $screenshot.Save((Join-Path $previewDirectory ("workspace-"+$scenario.Width+"-"+$scenario.Scale+".png")))
             $screenshot.Dispose()
             $header=$view.Controls[0].GetControlFromPosition(0,0)
-            $picker=$header.GetControlFromPosition(1,0)
-            $caption=$picker.GetControlFromPosition(0,0)
-            if ($picker.Top -lt 0 -or $caption.Top -lt 0 -or $picker.Bottom -gt $header.ClientSize.Height) { throw 'Header caption or document picker clipped.' }
-            foreach ($name in @('Documents','Categories','PartialReferences','Query','Search','ModeState','Status','IndexState','Proofs')) {
+            if($documents.Bottom -gt $header.ClientSize.Height -or $documents.Top -lt 0) { throw 'Document selector clipped.' }
+            if($header.Height -gt 60*$scenario.Scale) { throw 'Compact header uses too much height.' }
+            foreach ($name in @('Documents','Categories','Query','Search','ModeState','Status','IndexState','Proofs')) {
                 $control=$viewType.GetField($name,$flags).GetValue($view)
                 if ($control -is [Windows.Forms.ComboBox] -and $control.ItemHeight -lt $control.Font.Height + 4) { throw "Native combo text clipped: $name" }
                 $preferred=$control.GetPreferredSize([Drawing.Size]::new($control.Width,0))
                 if ($control.Height + 2 -lt $preferred.Height) { throw "Clipped $name at $($scenario.Width) / $($scenario.Scale): $($control.Height) < $($preferred.Height)" }
                 if ($control.Right -gt $control.Parent.ClientSize.Width + 2) { throw "Horizontal overflow: $name" }
             }
+            $view.HideResults();$view.ShowProofs($false);$view.SetMode($null);$view.PerformLayout();[Windows.Forms.Application]::DoEvents()
+            if($viewCanvas.Height -lt $view.Height*.70) { throw 'Less than 70 percent of the pane is available to the document.' }
+            $view.ShowResults(0);$view.PerformLayout();[Windows.Forms.Application]::DoEvents()
+            $emptyResults=$viewType.GetField('resultCount',$flags).GetValue($view)
+            if(!$emptyResults.Visible -or $emptyResults.Text -notmatch 'Aucun résultat') { throw 'No visible empty-search feedback.' }
             $beforeReading=$viewCanvas.Height;$view.SetReadingMode($true);$view.PerformLayout();[Windows.Forms.Application]::DoEvents()
             if($viewCanvas.Height -le $beforeReading){throw 'Reading mode did not increase document area.'}
             $viewCanvas.LoadDocument($tallPath);$viewCanvas.SetDocument($annotationDocument)
@@ -166,7 +170,7 @@ try {
     $indexerType = $assembly.GetType('Doctracker.AddIn.Infrastructure.DocumentIndexer', $true)
     $constructor = $indexerType.GetConstructors($flags)[0]
     $indexer = $constructor.Invoke([object[]]@($store.PSObject.BaseObject, $ocr.PSObject.BaseObject))
-    $indexer.Index($state, $document, $null, [Threading.CancellationToken]::None)
+    $indexer.Index($state, $document, $null, [Threading.CancellationToken]::None, $false)
     if (!$document.IndexComplete -or $document.IndexedPages[0].Text -notmatch 'FA-001') { throw 'Native PDF index failed.' }
     $matcher = New-Object Doctracker.Core.Services.DocumentMatcher
     $hit = $matcher.Find($state, 'FA-001', 1)[0]

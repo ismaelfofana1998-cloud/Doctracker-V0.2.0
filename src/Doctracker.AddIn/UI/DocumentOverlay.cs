@@ -9,7 +9,7 @@ namespace Doctracker.AddIn.UI
     {
         public static RectangleF Bounds(DocumentComment comment, Size size) => new RectangleF((float)comment.X * size.Width,
             (float)comment.Y * size.Height, (float)comment.Width * size.Width, (float)comment.Height * size.Height);
-        public static float FontPixels(int width) => Math.Max(1f, width * .027f);
+        public static float FontPixels(int width, double fontSize = 16) => (float)Math.Max(1, width * fontSize / 595d);
         public static void Draw(Graphics graphics, Size size, DocumentRecord document, int page)
         {
             if (document == null || size.Width < 1 || size.Height < 1) return;
@@ -22,7 +22,7 @@ namespace Doctracker.AddIn.UI
                     graphics.FillRectangle(Brushes.White, box); graphics.DrawRectangle(pen, box.X, box.Y, box.Width, box.Height);
                     var padding = Math.Max(1, size.Width * .006f); box.Inflate(-padding, -padding);
                     if (box.Width <= 0 || box.Height <= 0) continue;
-                    using (var font = new Font("Segoe UI", FontPixels(size.Width), FontStyle.Regular, GraphicsUnit.Pixel))
+                    using (var font = new Font("Segoe UI", FontPixels(size.Width, comment.FontSize), FontStyle.Regular, GraphicsUnit.Pixel))
                     using (var format = new StringFormat { Trimming = StringTrimming.EllipsisWord })
                         graphics.DrawString(comment.Text, font, red, box, format);
                 }

@@ -361,7 +361,7 @@ namespace Doctracker.AddIn.UI
         }
         public void FitWidth() { fitWidth = true; SetZoom(1d, true); }
         public void FitPage() { fitWidth = false; SetZoom(1d, true); }
-        public RectangleF FitComment(RectangleF zone, string text)
+        public RectangleF FitComment(RectangleF zone, string text, double fontSize = 16)
         {
             // Measure at a stable page width so wrapping is independent of current zoom.
             var referenceSize = new Size(1000, (int)(1000d * currentImage.Height / currentImage.Width));
@@ -369,7 +369,7 @@ namespace Doctracker.AddIn.UI
             var width = zone.Width * referenceSize.Width - padding;
             if (width < 40) throw new InvalidOperationException("Dessinez une zone de commentaire plus large.");
             using (var graphics = picture.CreateGraphics())
-            using (var font = new Font("Segoe UI", DocumentOverlay.FontPixels(referenceSize.Width), FontStyle.Regular, GraphicsUnit.Pixel))
+            using (var font = new Font("Segoe UI", DocumentOverlay.FontPixels(referenceSize.Width, fontSize), FontStyle.Regular, GraphicsUnit.Pixel))
             {
                 var needed = (graphics.MeasureString(text, font, (int)width).Height + padding + 6) / referenceSize.Height;
                 zone.Height = Math.Max(zone.Height, needed);

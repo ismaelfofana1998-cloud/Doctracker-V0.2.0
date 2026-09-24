@@ -54,6 +54,8 @@ namespace Doctracker.Core.Services
     }
     public static class CrossReferences
     {
+        public static string SnipLabel(DocumentRecord document, SnipRecord snip) =>
+            (string.IsNullOrWhiteSpace(document.TestReference) ? "" : document.TestReference + " - ") + snip.WorksheetName + "!" + snip.CellAddress;
         public static int Next(ProjectState state, string reference) => Available(state,reference).First();
         public static System.Collections.Generic.IEnumerable<int> Available(ProjectState state,string reference)
         {

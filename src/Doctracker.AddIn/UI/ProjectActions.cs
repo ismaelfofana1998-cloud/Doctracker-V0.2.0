@@ -15,6 +15,48 @@ namespace Doctracker.AddIn.UI
     internal sealed partial class DoctrackerPaneControl
     {
         private bool bindingCategories;
+        public bool CommandPressed(string command) => command=="Comment" ? canvas.CommentMode : command=="PartialReferences" && view.PartialReferences.Checked;
+        public void ExecuteCommand(string command)
+        {
+            if(context.IsBusy)return;
+            try
+            {
+                switch(command)
+                {
+                    case "Comment": ToggleComment();break;
+                    case "PartialReferences": view.PartialReferences.Checked=!view.PartialReferences.Checked;break;
+                    case "TestReference": ChangeTestReference();break;
+                    case "ReindexOcr": ReindexOcrAsync();break;
+                    case "DeleteSnip": DeleteSnip(focusedSnipId);break;
+                    case "ImportFolder": ImportFolderAsync();break;
+                    case "Categorize": ChangeCategory();break;
+                    case "CrossReference": AssignReference();break;
+                    case "ExportPdf": ExportPdfAsync();break;
+                    case "SharedStorage": SelectStorage();break;
+                    case "Backup": BackupAsync();break;
+                    case "Restore": RestoreBackup();break;
+                    case "RepairLinks": RepairLinks();break;
+                    case "RecoveryFolder": view.RecoveryFolder.PerformClick();break;
+                    case "Reindex": view.Reindex.PerformClick();break;
+                    case "Remove": view.Remove.PerformClick();break;
+                }
+            }
+            catch(Exception exception){ShowError(exception);}
+        }
+        private async void ReindexOcrAsync()
+        {
+            try
+            {
+                EnsureProject();var doc=SelectedDocument;if(doc==null)return;
+                BeginOperation();SetStatus("Reconnaissance OCR du document actif…");
+                await Task.Run(()=>new DocumentIndexer(context.Store,ocr).Index(context.State,doc,
+                    (page,count)=>SetStatusThreadSafe("OCR : "+page+" / "+count),operation.Token,true));
+                BindDocuments();context.MarkWorkbookDirty();SetStatus("OCR terminé. Relancez la recherche.");
+            }
+            catch(OperationCanceledException){SetStatus("OCR annulé. L'ancien index est conservé.");}
+            catch(Exception exception){ShowError(exception);}
+            finally{EndOperation();}
+        }
         private void WireProjectActions()
         {
             view.ImportFolder.Click+=(s,e)=>ImportFolderAsync();
@@ -111,14 +153,29 @@ namespace Doctracker.AddIn.UI
                 foreach(var file in files??new string[0])if(WordDocumentImporter.IsSupported(file))yield return file;
             }
         }
+        private bool ChangeTestReference()
+        {
+            EnsureProject();
+            var value=Prompt(this,"Référence du test","Référence commune aux prochaines Xref (les Xref existantes sont conservées)",context.State.TestReference);
+            if(string.IsNullOrWhiteSpace(value))return false;
+            value=value.Trim();if(value.Length>80)throw new InvalidOperationException("La référence est limitée à 80 caractères.");
+            var old=context.State.TestReference;context.State.TestReference=value;
+            try {context.Store.Save(context.State);}catch{context.State.TestReference=old;throw;}
+            context.MarkWorkbookDirty();SetStatus("Référence du test : "+value);return true;
+        }
         private void AssignReference()
         {
             if(context.IsBusy)return;
             try
             {
                 EnsureProject();var doc=SelectedDocument;if(doc==null)return;
-                var reference=Prompt(this,"Xref du document","Référence du test (ex. DAC B 30 040)",doc.TestReference);if(string.IsNullOrWhiteSpace(reference))return;
-                using(var dialog=new Form {Text="Numéro Xref disponible",Width=400,Height=150,StartPosition=FormStartPosition.CenterParent})
+                var reference=context.State.TestReference;
+                if(string.IsNullOrWhiteSpace(reference))
+                {
+                    if(!ChangeTestReference())return;
+                    reference=context.State.TestReference;
+                }
+                using(var dialog=new Form {Text=reference+" — Numéro disponible",Width=400,Height=150,StartPosition=FormStartPosition.CenterParent})
                 {
                     var list=new ComboBox {Dock=DockStyle.Top,DropDownStyle=ComboBoxStyle.DropDownList,DataSource=CrossReferences.Available(context.State,reference).Take(500).ToList()};
                     list.Format+=(s,e)=>e.Value=((int)e.ListItem).ToString("D2");list.FormattingEnabled=true;

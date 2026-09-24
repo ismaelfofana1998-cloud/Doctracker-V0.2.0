@@ -41,6 +41,8 @@ namespace Doctracker.AddIn.Excel
 
         public void WriteSnip(ExcelInterop.Range target, SnipRecord snip, DocumentRecord document, bool appendProof = false)
         {
+            if ((snip.Type == SnipType.Validation || snip.Type == SnipType.Exception) && target.Value2 == null && !(bool)target.HasFormula)
+                target.Value2 = snip.Type == SnipType.Validation ? "Validation" : "Exception";
             if (snip.Type != SnipType.Validation && snip.Type != SnipType.Exception)
             {
                 if (snip.Type == SnipType.Number || snip.Type == SnipType.Sum)

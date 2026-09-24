@@ -66,6 +66,28 @@ namespace Doctracker.Core.Tests
             doc.LastImportedAtUtc=new DateTime(2000,1,1);var imported=importer.Import(state,source,"test");
             Assert.Same(doc,imported);Assert.Single(state.Documents);Assert.True(imported.LastImportedAtUtc.Year>2000);
         }
+        [Fact] public void Comment_font_frame_and_common_reference_survive_storage()
+        {
+            var state=LinkedState();state.TestReference="DAC B 30 040";var store=Store;var service=new DocumentCommentService(store);
+            var comment=service.Save(state,"doc",1,new NormalizedRectangle(.1,.2,.4,.2),"À revoir",fontSize:12);
+            service.Save(state,"doc",1,new NormalizedRectangle(.1,.2,.6,.3),"Revu",comment.Id,24);
+            var loaded=store.LoadOrCreate("");var edited=Assert.Single(loaded.Documents[0].Comments);
+            Assert.Equal(24,edited.FontSize);Assert.Equal(.6,edited.Width);Assert.Equal(.3,edited.Height);Assert.Equal("DAC B 30 040",loaded.TestReference);
+            CrossReferences.Assign(loaded,loaded.Documents[0],loaded.TestReference,1);
+            var next=new DocumentRecord();loaded.Documents.Add(next);CrossReferences.Assign(loaded,next,loaded.TestReference,CrossReferences.Next(loaded,loaded.TestReference));
+            Assert.Equal(2,next.ReferenceNumber);Assert.Equal(loaded.Documents[0].TestReference,next.TestReference);
+        }
+        [Theory] [InlineData(0)] [InlineData(73)] [InlineData(double.NaN)]
+        public void Invalid_comment_font_is_rejected_without_mutation(double font)
+        {
+            var state=LinkedState();Assert.Throws<ArgumentOutOfRangeException>(()=>new DocumentCommentService(Store).Save(state,"doc",1,new NormalizedRectangle(0,0,.5,.2),"texte",fontSize:font));
+            Assert.Empty(state.Documents[0].Comments);
+        }
+        [Fact] public void Snip_export_uses_test_reference_without_document_number()
+        {
+            var doc=new DocumentRecord {TestReference="DAC B 30 040",ReferenceNumber=2};
+            Assert.Equal("DAC B 30 040 - Feuil!A1",CrossReferences.SnipLabel(doc,new SnipRecord {WorksheetName="Feuil",CellAddress="A1"}));
+        }
         public void Dispose() {if(Directory.Exists(root))Directory.Delete(root,true);}
     }
 }

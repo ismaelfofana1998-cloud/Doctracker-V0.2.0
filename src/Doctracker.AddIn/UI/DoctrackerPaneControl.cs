@@ -81,7 +81,6 @@ namespace Doctracker.AddIn.UI
                 if (args.KeyCode == Keys.Enter) { args.SuppressKeyPress = true; SearchFromPane(); }
                 if (args.KeyCode == Keys.Escape) { args.SuppressKeyPress = true; view.HideResults(); }
             };
-            view.ModeChanged += SetSnipMode;
             view.Proofs.SelectedIndexChanged += (sender, args) => {
                 if (bindingProofs || context.IsBusy) return;
                 var item = view.Proofs.SelectedItem as ProofItem;
@@ -219,7 +218,7 @@ namespace Doctracker.AddIn.UI
                 BeginOperation();
                 PageTextRecord recognized;
                 if (type == SnipType.Validation || type == SnipType.Exception)
-                    recognized = new PageTextRecord { Text = ExcelCellGateway.QueryText(target) };
+                    recognized = new PageTextRecord { Text = string.IsNullOrWhiteSpace(ExcelCellGateway.QueryText(target)) ? SnipTheme.LabelFor(type) : ExcelCellGateway.QueryText(target) };
                 else
                 {
                     SetStatus("Extraction de la zone…");
@@ -332,7 +331,7 @@ namespace Doctracker.AddIn.UI
                 operation.Token.ThrowIfCancellationRequested();
                 searchResults.DataSource = results;
                 view.ShowResults(results.Count);
-                SetStatus(results.Count + " résultat(s)." + (errors.Count > 0 ? " Attention : " + errors.Count + " pièce(s) non indexée(s)." : ""));
+                SetStatus((results.Count==0 ? "Aucun résultat. Vérifiez la catégorie ou utilisez Documents > Réindexer par OCR dans le ruban." : results.Count + " résultat(s).") + (errors.Count > 0 ? " Attention : " + errors.Count + " pièce(s) non indexée(s)." : ""));
             }
             catch (OperationCanceledException) { SetStatus("Recherche annulée."); }
             catch (Exception exception) { ShowError(exception); }
