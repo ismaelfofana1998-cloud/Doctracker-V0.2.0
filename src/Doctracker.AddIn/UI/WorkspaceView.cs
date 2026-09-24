@@ -14,9 +14,8 @@ namespace Doctracker.AddIn.UI
         public readonly TextBox Query = new TextBox { Dock = DockStyle.Fill, BorderStyle = BorderStyle.FixedSingle, AccessibleName = "Rechercher dans les documents" };
         public readonly ListBox Results = new ListBox { Dock = DockStyle.Fill, BorderStyle = BorderStyle.None, IntegralHeight = false, DisplayMember = "Caption", HorizontalScrollbar = true, AccessibleName = "Résultats de recherche" };
         public readonly ComboBox Proofs = new EvidenceComboBox { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList, DisplayMember = "Caption", FlatStyle = FlatStyle.Flat, AccessibleName = "Preuves de la cellule" };
-        public readonly Label IndexState = Label("Aucune pièce");
-        public readonly Label ModeState = Label("Choisissez un snip, puis dessinez une zone.");
-        public readonly Label Status = Label("Prêt · Cliquez sur une cellule liée pour afficher sa preuve.");
+        public readonly Label Brand = Label("Doctracker");
+        public readonly Label Status = Label("Prêt");
         public readonly Button Search = SnipTheme.Button("Rechercher", "SearchDocuments");
         public readonly Button DeleteSnip = SnipTheme.Button("", "Delete", Color.Red);
         public readonly Button Cancel = SnipTheme.Button("Annuler");
@@ -36,10 +35,10 @@ namespace Doctracker.AddIn.UI
             BackColor = Color.White; ForeColor = SnipTheme.Ink; Dock = DockStyle.Fill;
             Size = new Size(760,700);
             var root = Rows(); root.AutoSize=false; root.Dock = DockStyle.Fill;
-            var header = Row(55,45); header.Padding = new Padding(8,6,8,4);
+            var header = Row(0,100); header.ColumnStyles[0] = new ColumnStyle(SizeType.AutoSize); header.Padding = new Padding(8,6,8,4);
             header.BackColor=SnipTheme.Surface;
-            Documents.Margin=new Padding(0,0,8,0);Documents.Anchor=AnchorStyles.Left|AnchorStyles.Right;
-            header.Controls.Add(Documents,0,0);
+            Brand.ForeColor=SnipTheme.Ink;Brand.Padding=new Padding(0,0,12,0);Brand.Anchor=AnchorStyles.Left;Brand.Dock=DockStyle.None;
+            header.Controls.Add(Brand,0,0);
             var searchRow=Row(100,0);searchRow.ColumnStyles[1]=new ColumnStyle(SizeType.AutoSize);
             Query.Anchor=AnchorStyles.Left|AnchorStyles.Right;Query.Margin=new Padding(0,0,2,0);
             Search.Text="";Search.AccessibleName="Rechercher";Search.Padding=new Padding(3,2,3,2);Search.Margin=Padding.Empty;
@@ -51,8 +50,10 @@ namespace Doctracker.AddIn.UI
                 var longest=Documents.Items.Cast<object>().Select(item=>Documents.GetItemText(item)).Aggregate("",(a,b)=>b.Length>a.Length?b:a);
                 Documents.DropDownWidth=Math.Max(Documents.Width,Math.Min(900,TextRenderer.MeasureText(longest,Documents.Font).Width+40));
             };
-            var filters=Row(65,35);filters.Padding=new Padding(8,2,8,4);
-            filters.Controls.Add(Categories,0,0);filters.Controls.Add(IndexState,1,0);IndexState.Anchor=AnchorStyles.Left;IndexState.Dock=DockStyle.None;
+            var filters=Row(35,65);filters.Padding=new Padding(8,2,8,4);
+            Categories.Margin=new Padding(0,0,8,0);Documents.Margin=Padding.Empty;
+            Categories.Anchor=Documents.Anchor=AnchorStyles.Left|AnchorStyles.Right;
+            filters.Controls.Add(Categories,0,0);filters.Controls.Add(Documents,1,0);
             Add(root,filters);
             Categories.Items.Add("Tous les documents");Categories.SelectedIndex=0;
             tips.SetToolTip(Categories,"Dossier actif : il limite la recherche et l'export");
@@ -63,34 +64,35 @@ namespace Doctracker.AddIn.UI
             resultsHeader.Controls.Add(resultCount,0,0);resultsHeader.Controls.Add(close,1,0);Add(resultsPanel,resultsHeader);
             Results.Height=76;Add(resultsPanel,Results,SizeType.Absolute,76);Add(root,resultsPanel);
             Results.FontChanged+=(s,e)=>SizeResults();
-            ModeState.Visible=false;ModeState.Padding=new Padding(10,2,10,3);ModeState.BackColor=SnipTheme.Surface;Add(root,ModeState);
             proofPanel=Row(0,100);proofPanel.ColumnStyles[0]=new ColumnStyle(SizeType.AutoSize);proofPanel.Padding=new Padding(10,5,10,5);proofPanel.Visible=false;
             proofPanel.Controls.Add(Label("Preuve"),0,0);proofPanel.Controls.Add(Proofs,1,0);proofPanel.ColumnCount=3;proofPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));proofPanel.Controls.Add(DeleteSnip,2,0);Add(root,proofPanel);
             Add(root,Canvas,SizeType.Percent,100);
-            Cancel.Visible=false;Add(root,Cancel);
-            Status.Padding=new Padding(10,4,10,4);Status.BackColor=SnipTheme.Surface;Add(root,Status);
+            var footer=Row(100,0);footer.ColumnStyles[1]=new ColumnStyle(SizeType.AutoSize);footer.BackColor=SnipTheme.Surface;
+            Status.AutoSize=false;Status.AutoEllipsis=true;Status.Padding=new Padding(8,2,8,2);Status.Height=Font.Height+8;
+            Status.FontChanged+=(s,e)=>Status.Height=Status.Font.Height+8;
+            Status.TextChanged+=(s,e)=>tips.SetToolTip(Status,Status.Text);
+            Cancel.Visible=false;Cancel.Margin=Padding.Empty;Cancel.Padding=new Padding(4,0,4,0);
+            footer.Controls.Add(Status,0,0);footer.Controls.Add(Cancel,1,0);Add(root,footer);
             Action sizeHeader = () => {
-                var height=Math.Max(Math.Max(Documents.PreferredHeight,Documents.Font.Height+14),Search.GetPreferredSize(Size.Empty).Height)+header.Padding.Vertical;
+                var height=Math.Max(Query.PreferredHeight,Search.GetPreferredSize(Size.Empty).Height)+header.Padding.Vertical;
                 root.RowStyles[0].SizeType=SizeType.Absolute;
                 if(root.RowStyles[0].Height!=height)root.RowStyles[0].Height=height;
             };
             Documents.FontChanged+=(s,e)=>sizeHeader();header.Layout+=(s,e)=>sizeHeader();sizeHeader();
             Controls.Add(root);
-            Resize+=(s,e)=> { var w=Math.Max(100,ClientSize.Width); ModeState.MaximumSize=new Size(w,0);Status.MaximumSize=new Size(w,0);IndexState.MaximumSize=new Size(Math.Max(70,(int)(w*.33)),0); };
         }
         public void SetMode(SnipType? type)
         {
             Canvas.CommentMode=false;Canvas.ActiveType=type;
-            ModeState.Visible=type.HasValue;
-            ModeState.Text=type.HasValue ? SnipTheme.LabelFor(type.Value)+" · Dessinez une zone. Le mode reste actif." : "Choisissez un snip, puis dessinez une zone.";
-            ModeState.ForeColor=type.HasValue?SnipTheme.ColorFor(type.Value):SnipTheme.Muted;
+
         }
         public void SetCommentMode(bool active)
         {
             SetMode(null);Canvas.CommentMode=active;
-            ModeState.Text="Commentaire · Dessinez une zone puis saisissez le texte.";ModeState.ForeColor=Color.Red;
-            ModeState.Visible=active;
+
         }
+        public void SetDocumentSummary(int total, int indexed) => tips.SetToolTip(Documents,
+            "Document actif · " + total + " pièce(s), " + indexed + " indexée(s). Texte préparé à la première recherche.");
         public void ShowResults(int count) { resultTotal=count;resultCount.Text=count==0 ? "Aucun résultat · Vérifiez le dossier ou réindexez le document." : count+" résultat(s)";SizeResults();resultsPanel.Visible=true; }
         private void SizeResults() { Results.Visible=resultTotal>0;resultsPanel.RowStyles[1].Height=resultTotal==0 ? 0 : Math.Min(3,resultTotal)*Results.ItemHeight+8; resultCount.MaximumSize=new Size(Math.Max(100,Width-120),0); }
         public void HideResults() { resultsPanel.Visible=false; }

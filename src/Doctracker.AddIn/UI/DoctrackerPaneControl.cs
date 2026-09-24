@@ -24,13 +24,10 @@ namespace Doctracker.AddIn.UI
         private readonly WorkspaceView view;
         private bool bindingProofs;
         private string focusedSnipId;
-        private string lastImportedId;
         private readonly DocumentCanvas canvas;
         private readonly ComboBox documents;
         private TextBox searchBox;
         private readonly ListBox searchResults;
-        private readonly Label ocrState;
-        private Label modeState;
         private readonly Label status;
 
         private SnipType? activeSnipType;
@@ -68,8 +65,6 @@ namespace Doctracker.AddIn.UI
             documents = view.Documents;
             searchBox = view.Query;
             searchResults = view.Results;
-            ocrState = view.IndexState;
-            modeState = view.ModeState;
             status = view.Status;
             cancelButton = view.Cancel;
             canvas = view.Canvas;
@@ -151,9 +146,7 @@ namespace Doctracker.AddIn.UI
             activeSnipType = type;
             view.SetMode(type);
             Ribbon.DoctrackerRibbon.Instance?.Refresh();
-            SetStatus(type.HasValue
-                ? "Mode " + type.Value + " activé. Vous pouvez sniper plusieurs zones sans recliquer."
-                : "Mode de snip désactivé.");
+            SetStatus(type.HasValue ? SnipTheme.LabelFor(type.Value) : "Prêt");
         }
 
         public bool IsSnipMode(SnipType type)
@@ -179,25 +172,40 @@ namespace Doctracker.AddIn.UI
                 })
                 {
                     if (dialog.ShowDialog() != DialogResult.OK) return;
-                    BeginOperation();
-                    lastImportedId=null;var errors = new List<string>();
-                    foreach (var path in dialog.FileNames)
-                    {
-                        operation.Token.ThrowIfCancellationRequested();
-                        try { SetStatus("Import : " + Path.GetFileName(path)); var imported=await Task.Run(() => WordDocumentImporter.Import(context,path,null,true,operation.Token));lastImportedId=imported.Id; }
-                        catch (OperationCanceledException) { throw; }
-                        catch (Exception exception) { errors.Add(Path.GetFileName(path) + " : " + exception.Message); }
-                    }
-                    RefreshCategories(); BindDocuments();SelectLastImported();
-                    errors.AddRange(await IndexMissingAsync());
-                    BindDocuments();SelectLastImported();
-                    SetStatus(errors.Count == 0 ? "Pièces importées et prêtes pour la recherche." : "Import terminé avec " + errors.Count + " erreur(s).");
-                    if (errors.Count > 0) MessageBox.Show(this, string.Join("\n", errors), "Pièces à vérifier");
+                    await ImportPathsAsync(dialog.FileNames, null);
                 }
             }
-            catch (OperationCanceledException) { RefreshCategories();BindDocuments();SelectLastImported();SetStatus("Import interrompu. Les pièces déjà importées sont conservées."); }
             catch (Exception exception) { ShowError(exception); }
-            finally { EndOperation(); }
+        }
+
+        private async Task ImportPathsAsync(IEnumerable<string> paths, Func<string, string> categoryFor)
+        {
+            // Capture UI values before dispatch. No control or Excel access in categoryFor on the worker.
+            var currentFolder = (view.Categories.SelectedItem as FolderChoice)?.Path;
+            BeginOperation();
+            ImportBatchResult result = null;
+            try
+            {
+                var token = operation.Token;
+                result = await Task.Run(() => DocumentImportBatch.Run(context.Store, context.State, paths,
+                    path => WordDocumentImporter.Import(context, path, categoryFor == null ? currentFolder : categoryFor(path), false, token),
+                    (count, name) => SetStatusThreadSafe("Import " + (count + 1) + " · " + name), token));
+            }
+            finally
+            {
+                EndOperation();
+                if (!IsDisposed)
+                {
+                    RefreshCategories();
+                    if (result?.LastDocumentId != null && !VisibleDocuments().Any(d => d.Id == result.LastDocumentId))
+                    { bindingCategories = true; try { view.Categories.SelectedIndex = 0; } finally { bindingCategories = false; } }
+                    BindDocuments(result?.LastDocumentId);
+                }
+            }
+            if (IsDisposed) return;
+            SetStatus((result.Cancelled ? "Import arrêté · " : "Import terminé · ") + result.ImportedCount +
+                " fichier(s), " + result.Errors.Count + " erreur(s). Texte préparé à la première recherche.");
+            if (result.Errors.Count > 0) MessageBox.Show(this, string.Join("\n", result.Errors.Take(30)), "Pièces non importées");
         }
 
         private async void Canvas_SelectionCompleted(object sender, EventArgs e)
@@ -228,6 +236,13 @@ namespace Doctracker.AddIn.UI
                     SetStatus("Extraction de la zone…");
                     // Native/indexed words preserve exact text; scan-only pages use the local OCR.
                     recognized = ExtractIndexedSelection(document, pageNumber, rectangle);
+                    if (recognized == null && !document.IndexComplete)
+                    {
+                        var path = canvas.CurrentPath;
+                        var native = await Task.Run(() => DocumentIndexer.ReadNativePage(path, pageNumber));
+                        operation.Token.ThrowIfCancellationRequested();
+                        recognized = ExtractPageSelection(native, rectangle);
+                    }
                     if (recognized == null)
                         using (var crop = canvas.CropSelection()) recognized = await Task.Run(() => ocr.Recognize(crop, type == SnipType.Table));
                 }
@@ -617,10 +632,10 @@ namespace Doctracker.AddIn.UI
             }
         }
 
-        private void BindDocuments()
+        private void BindDocuments(string preferredId = null)
         {
             var visible=VisibleDocuments().Reverse().OrderByDescending(d=>d.LastImportedAtUtc==default(DateTime)?d.AddedAtUtc:d.LastImportedAtUtc).ToList();
-            var selectedId = SelectedDocument?.Id;
+            var selectedId = preferredId ?? SelectedDocument?.Id;
             if(selectedId!=null && !visible.Any(d=>d.Id==selectedId))selectedId=null;
             var listChanged = documents.Items.Count != visible.Count ||
                 documents.Items.Cast<DocumentRecord>().Where((doc, index) => !ReferenceEquals(doc, visible[index])).Any();
@@ -634,14 +649,9 @@ namespace Doctracker.AddIn.UI
                 documents.SelectedIndexChanged += Documents_SelectedIndexChanged;
                 Documents_SelectedIndexChanged(this, EventArgs.Empty);
             }
-            var total = context.State.Documents.Count;
-            var indexed = context.State.Documents.Count(item => item.IndexComplete);
-            ocrState.Text = total == 0
-                ? "Aucune pièce"
-                : total + " pièces · " + indexed + " indexées";
+            else if (preferredId != null) SelectDocument(preferredId);
+            view.SetDocumentSummary(context.State.Documents.Count, context.State.Documents.Count(item => item.IndexComplete));
         }
-
-        private void SelectLastImported() { if(lastImportedId!=null)SelectDocument(lastImportedId); }
 
         private void SelectDocument(string id)
         {
@@ -812,21 +822,26 @@ namespace Doctracker.AddIn.UI
             try
             {
                 var page = document.IndexedPages.FirstOrDefault(item => item.PageNumber == pageNumber);
-                if (page == null || page.Words == null || page.Words.Count == 0) return null;
-                var selected = page.Words.Where(word =>
-                    word.X + word.Width / 2 >= zone.Left && word.X + word.Width / 2 <= zone.Right &&
-                    word.Y + word.Height / 2 >= zone.Top && word.Y + word.Height / 2 <= zone.Bottom).ToList();
-                if (selected.Count == 0) return null;
-                return new PageTextRecord
-                {
-                    Text = string.Join("\n", selected.GroupBy(word => word.Line).Select(line => string.Join(" ", line.Select(word => word.Text)))),
-                    Words = selected.Select(word => new WordRecord { Text = word.Text, Line = word.Line,
-                        X = Math.Max(0, (word.X - zone.X) / zone.Width), Y = Math.Max(0, (word.Y - zone.Y) / zone.Height),
-                        Width = Math.Min(word.X + word.Width, zone.Right) / zone.Width - Math.Max(word.X, zone.Left) / zone.Width,
-                        Height = Math.Min(word.Y + word.Height, zone.Bottom) / zone.Height - Math.Max(word.Y, zone.Top) / zone.Height }).ToList()
-                };
+                return ExtractPageSelection(page, zone);
             }
             finally { document.ReleaseIndex(); }
+        }
+
+        private static PageTextRecord ExtractPageSelection(PageTextRecord page, RectangleF zone)
+        {
+            if (page == null || page.Words == null || page.Words.Count == 0) return null;
+            var selected = page.Words.Where(word =>
+                word.X + word.Width / 2 >= zone.Left && word.X + word.Width / 2 <= zone.Right &&
+                word.Y + word.Height / 2 >= zone.Top && word.Y + word.Height / 2 <= zone.Bottom).ToList();
+            if (selected.Count == 0) return null;
+            return new PageTextRecord
+            {
+                Text = string.Join("\n", selected.GroupBy(word => word.Line).Select(line => string.Join(" ", line.Select(word => word.Text)))),
+                Words = selected.Select(word => new WordRecord { Text = word.Text, Line = word.Line,
+                    X = Math.Max(0, (word.X - zone.X) / zone.Width), Y = Math.Max(0, (word.Y - zone.Y) / zone.Height),
+                    Width = Math.Min(word.X + word.Width, zone.Right) / zone.Width - Math.Max(word.X, zone.Left) / zone.Width,
+                    Height = Math.Min(word.Y + word.Height, zone.Bottom) / zone.Height - Math.Max(word.Y, zone.Top) / zone.Height }).ToList()
+            };
         }
 
         private string ChooseSnipId(ExcelInterop.Range target)

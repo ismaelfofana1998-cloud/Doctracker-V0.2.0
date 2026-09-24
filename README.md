@@ -1,11 +1,11 @@
-# Doctracker 0.8.1 — complément Excel Windows
+# Doctracker 0.8.2 — complément Excel Windows
 
 Doctracker importe des PDF, images et fichiers Word (via Word installé), les classe par catégories et intègre les pièces
 au classeur Excel, ou les référence dans un emplacement réseau partagé. Il permet
 de sélectionner des zones, extraire leur contenu dans Excel, associer plusieurs
 preuves à une cellule et revenir à la source pour la revue.
 
-Voir [la stabilisation 0.8.1](docs/STABILISATION_0.8.1.md), [les corrections 0.8 : recherche, dossiers et manipulation directe](docs/CORRECTIONS_0.8.md), [les améliorations 0.7 : espace, recherche et annotations](docs/ERGONOMIE_0.7.md), [les ajouts 0.6 : édition, Word et lecture](docs/EDITION_0.6.md) et [le guide 0.5 : partage, catégories, Xref et récupération](docs/PORTABILITE_0.5.md).
+Voir [le nouvel import et le panneau compact 0.8.2](docs/IMPORT_0.8.2.md), [la stabilisation 0.8.1](docs/STABILISATION_0.8.1.md), [les corrections 0.8 : recherche, dossiers et manipulation directe](docs/CORRECTIONS_0.8.md), [les améliorations 0.7 : espace, recherche et annotations](docs/ERGONOMIE_0.7.md), [les ajouts 0.6 : édition, Word et lecture](docs/EDITION_0.6.md) et [le guide 0.5 : partage, catégories, Xref et récupération](docs/PORTABILITE_0.5.md).
 
 ## Installer et utiliser
 
@@ -17,7 +17,7 @@ Voir [la stabilisation 0.8.1](docs/STABILISATION_0.8.1.md), [les corrections 0.8
    Lancer `Install-Doctracker.cmd` et vérifier le certificat affiché.
 4. Ouvrir Excel de bureau Windows, puis enregistrer un classeur local.
 5. Onglet **Doctracker → Importer**. Le dernier document importé s'affiche ;
-   l'indexation utilise le texte natif des PDF ou l'OCR français/anglais pour les scans.
+   l’import copie les pièces sans OCR. La première recherche prépare le texte du dossier actif ; un snip utilise le texte natif de sa page ou l’OCR de la zone.
 6. Sélectionner une cellule, choisir **Texte**, **Nombre**, **Date**, **Somme**,
    **Tableau**, **Validation** ou **Exception**, puis dessiner une zone.
 7. Cliquer une fois sur une cellule liée pour afficher sa preuve. S'il y en a plusieurs,

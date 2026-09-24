@@ -112,6 +112,20 @@ namespace Doctracker.AddIn.Infrastructure
             return errors;
         }
 
+        internal static PageTextRecord ReadNativePage(string path, int pageNumber)
+        {
+            if (!string.Equals(Path.GetExtension(path), ".pdf", StringComparison.OrdinalIgnoreCase)) return null;
+            NativePdfiumLoader.EnsureLoaded();
+            using (var pdf = PdfDocument.Load(path))
+            {
+                if (pageNumber < 1 || pageNumber > pdf.PageCount) return null;
+                var text = pdf.GetPdfText(pageNumber - 1);
+                if (string.IsNullOrWhiteSpace(text)) return null;
+                var page = ReadNativePage(pdf, pageNumber - 1, text);
+                page.PageNumber = pageNumber; return page;
+            }
+        }
+
         private static PageTextRecord ReadNativePage(PdfDocument pdf, int index, string text)
         {
             var page = new PageTextRecord { Text = text };

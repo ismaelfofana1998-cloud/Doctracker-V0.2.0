@@ -73,7 +73,7 @@ try {
             $documents = $viewType.GetField('Documents', $flags).GetValue($view)
             [void]$documents.Items.Add('Facture - septembre 2026.pdf'); $documents.SelectedIndex=0
             $viewType.GetField('Query', $flags).GetValue($view).Text='FA-2026-0142'
-            $viewType.GetField('IndexState', $flags).GetValue($view).Text='3 documents · 3 indexés'
+            $view.SetDocumentSummary(3,0)
             $viewType.GetField('Results', $flags).GetValue($view).Items.Add('Facture - septembre 2026.pdf · page 1 · score 100 %') | Out-Null
             $view.SetMode([Doctracker.Core.Models.SnipType]::Text)
             $view.ShowResults(1)
@@ -102,9 +102,9 @@ try {
             $screenshot.Save((Join-Path $previewDirectory ("workspace-"+$scenario.Width+"-"+$scenario.Scale+".png")))
             $screenshot.Dispose()
             $header=$view.Controls[0].GetControlFromPosition(0,0)
-            if($documents.Bottom -gt $header.ClientSize.Height -or $documents.Top -lt 0) { throw 'Document selector clipped.' }
+            if($documents.Bottom -gt $documents.Parent.ClientSize.Height -or $documents.Top -lt 0) { throw 'Document selector clipped.' }
             if($header.Height -gt 60*$scenario.Scale) { throw 'Compact header uses too much height.' }
-            foreach ($name in @('Documents','Categories','Query','Search','ModeState','Status','IndexState','Proofs')) {
+            foreach ($name in @('Brand','Documents','Categories','Query','Search','Proofs')) {
                 $control=$viewType.GetField($name,$flags).GetValue($view)
                 if ($control -is [Windows.Forms.ComboBox] -and $control.ItemHeight -lt $control.Font.Height + 4) { throw "Native combo text clipped: $name" }
                 $preferred=$control.GetPreferredSize([Drawing.Size]::new($control.Width,0))
@@ -112,6 +112,26 @@ try {
                 if ($control.Right -gt $control.Parent.ClientSize.Width + 2) { throw "Horizontal overflow: $name" }
             }
             $view.HideResults();$view.ShowProofs($false);$view.SetMode($null);$view.PerformLayout();[Windows.Forms.Application]::DoEvents()
+            $categories=$viewType.GetField('Categories',$flags).GetValue($view)
+            if($categories.Parent -ne $documents.Parent -or [Math]::Abs($categories.Top-$documents.Top) -gt 3){throw 'Folders and documents are not on the same row.'}
+            $brand=$viewType.GetField('Brand',$flags).GetValue($view)
+            $query=$viewType.GetField('Query',$flags).GetValue($view)
+            if($brand.Parent -ne $query.Parent.Parent){throw 'Search is not on the Doctracker header row.'}
+            $restHeight=$viewCanvas.Height
+            foreach($mode in @([Doctracker.Core.Models.SnipType]::Text,[Doctracker.Core.Models.SnipType]::Exception)) {
+                $view.SetMode($mode);$view.PerformLayout();[Windows.Forms.Application]::DoEvents()
+                if($viewCanvas.Height -ne $restHeight){throw 'Snip mode added a banner or reduced the document area.'}
+            }
+            $view.SetCommentMode($true);$view.PerformLayout();[Windows.Forms.Application]::DoEvents()
+            if($viewCanvas.Height -ne $restHeight){throw 'Comment mode reduced the document area.'}
+            $view.SetMode($null)
+            $viewType.GetField('Status',$flags).GetValue($view).Text=('Long status message ' * 30)
+            $view.PerformLayout();[Windows.Forms.Application]::DoEvents()
+            if($viewCanvas.Height -ne $restHeight){throw 'Long status expanded the footer.'}
+            $viewType.GetField('Status',$flags).GetValue($view).Text='Prêt'
+            $clean=[Drawing.Bitmap]::new($view.Width,$view.Height);$view.DrawToBitmap($clean,[Drawing.Rectangle]::new(0,0,$view.Width,$view.Height))
+            $clean.Save((Join-Path $previewDirectory ('compact-'+$scenario.Width+'-'+$scenario.Scale+'.png')));$clean.Dispose()
+
             if($viewCanvas.Height -lt $view.Height*.70) { throw 'Less than 70 percent of the pane is available to the document.' }
             $view.ShowResults(0);$view.PerformLayout();[Windows.Forms.Application]::DoEvents()
             $emptyResults=$viewType.GetField('resultCount',$flags).GetValue($view)
@@ -230,6 +250,10 @@ try {
     $indexerType = $assembly.GetType('Doctracker.AddIn.Infrastructure.DocumentIndexer', $true)
     $constructor = $indexerType.GetConstructors($flags)[0]
     $indexer = $constructor.Invoke([object[]]@($store.PSObject.BaseObject, $ocr.PSObject.BaseObject))
+    $readPage=$indexerType.GetMethod('ReadNativePage',($flags -bor [Reflection.BindingFlags]::Static),$null,[Type[]]@([string],[int]),$null)
+    $nativePage=$readPage.Invoke($null,[object[]]@($pdfPath,1))
+    if($document.IndexComplete -or $document.IndexKey -ne '' -or $nativePage.Text -notmatch 'FA-001' -or $nativePage.Words.Count -eq 0){throw 'First snip cannot use native PDF text before indexing.'}
+
     $indexer.Index($state, $document, $null, [Threading.CancellationToken]::None, $false)
     if (!$document.IndexComplete -or $document.IndexedPages[0].Text -notmatch 'FA-001') { throw 'Native PDF index failed.' }
     $matcher = New-Object Doctracker.Core.Services.DocumentMatcher

@@ -114,28 +114,16 @@ namespace Doctracker.AddIn.UI
                 {
                     if(picker.ShowDialog(this)!=DialogResult.OK)return;
                     var category=Prompt(this,"Importer un dossier","Dossier principal (les sous-dossiers sont conservés)",Path.GetFileName(picker.SelectedPath));if(category==null)return;
-                    BeginOperation();lastImportedId=null;var root=picker.SelectedPath;var errors=new List<string>();
-                    var count=await Task.Run(()=>
-                    {
-                        var imported=0;
-                        foreach(var file in EnumerateDocuments(root,errors))
-                        {
-                            operation.Token.ThrowIfCancellationRequested();
-                            var relative=Path.GetDirectoryName(file).Substring(root.TrimEnd(Path.DirectorySeparatorChar).Length).Trim(Path.DirectorySeparatorChar);
-                            try {var document=WordDocumentImporter.Import(context,file,string.IsNullOrWhiteSpace(relative)?category:category+" / "+relative.Replace(Path.DirectorySeparatorChar.ToString()," / "),false,operation.Token);lastImportedId=document.Id;imported++;}
-                            catch(OperationCanceledException){throw;}
-                            catch(Exception exception){errors.Add(Path.GetFileName(file)+" : "+exception.Message);}
-                            if(imported%25==0){context.Store.Save(context.State);SetStatusThreadSafe(imported+" pièces importées…");}
-                        }
-                        context.Store.Save(context.State);return imported;
+                    var root=picker.SelectedPath;var enumerationErrors=new List<string>();
+                    await ImportPathsAsync(EnumerateDocuments(root,enumerationErrors), file => {
+                        var relative=Path.GetDirectoryName(file).Substring(root.TrimEnd(Path.DirectorySeparatorChar).Length).Trim(Path.DirectorySeparatorChar);
+                        return string.IsNullOrWhiteSpace(relative)?category:category+" / "+relative.Replace(Path.DirectorySeparatorChar.ToString()," / ");
                     });
-                    RefreshCategories();BindDocuments();SelectLastImported();errors.AddRange(await IndexMissingAsync());BindDocuments();SelectLastImported();
-                    SetStatus(count+" pièces importées. "+errors.Count+" erreur(s).");if(errors.Count>0)MessageBox.Show(this,string.Join("\n",errors.Take(30)),"Import : pièces à vérifier");
+                    if(enumerationErrors.Count>0)MessageBox.Show(this,string.Join("\n",enumerationErrors.Take(30)),"Dossiers non accessibles");
                 }
             }
-            catch(OperationCanceledException){try{context.Store.Save(context.State);RefreshCategories();BindDocuments();SelectLastImported();SetStatus("Import arrêté. Les pièces déjà importées sont conservées.");}catch(Exception failure){ShowError(failure);}}
+
             catch(Exception exception){ShowError(exception);}
-            finally{EndOperation();}
         }
         private static IEnumerable<string> EnumerateDocuments(string root,List<string> errors)
         {

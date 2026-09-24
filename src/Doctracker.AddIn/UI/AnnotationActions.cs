@@ -34,7 +34,7 @@ namespace Doctracker.AddIn.UI
             if(context.IsBusy)return;
             activeSnipType=null;view.SetCommentMode(!canvas.CommentMode);
             Ribbon.DoctrackerRibbon.Instance?.Refresh();
-            SetStatus(canvas.CommentMode ? "Dessinez le cadre du commentaire sur le document." : "Commentaire désactivé.");
+            SetStatus(canvas.CommentMode ? "Commentaire" : "Prêt");
         }
         private void NavigateToLinkedCell(SnipRecord snip)
         {

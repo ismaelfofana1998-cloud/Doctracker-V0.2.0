@@ -29,7 +29,9 @@ namespace Doctracker.AddIn.Infrastructure
                 cancellation.ThrowIfCancellationRequested();
                 return context.Importer.Import(context.State, output, Environment.UserName, category, persist, Path.GetFileName(path), hash);
             }
-            finally { if (Directory.Exists(folder)) Directory.Delete(folder, true); }
+            finally { try { if (Directory.Exists(folder)) Directory.Delete(folder, true); }
+                catch (IOException failure) { System.Diagnostics.Trace.WriteLine(failure); }
+                catch (UnauthorizedAccessException failure) { System.Diagnostics.Trace.WriteLine(failure); } }
         }
         public static void ConvertToPdf(string source, string destination, CancellationToken cancellation)
         {
