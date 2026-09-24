@@ -144,17 +144,22 @@ try {
     $hit = $matcher.Find($state, 'FA-001', 1)[0]
     if (!$hit.IsExact -or !$hit.HasLocation -or $hit.Y -gt .4 -or $hit.Y -lt .1) { throw 'Native PDF word position incorrect.' }
     Write-Host 'PASS: PDFium deployment, landscape rendering, native PDF text and positional matching'
-    $exporterType=$assembly.GetType('Doctracker.AddIn.Infrastructure.AnnotatedPdfExporter',$true)
-    $snip.X=$hit.X; $snip.Y=$hit.Y; $snip.Width=$hit.Width; $snip.Height=$hit.Height
-    $snip.WorksheetName='Achats'; $snip.CellAddress='B2'
-    $document.TestReference='DAC B 30 040'; $document.ReferenceNumber=1
+    # Windows PowerShell does not apply the add-in's .dll.config redirects.
+    # Exercise export in a tiny host with the deployed configuration, in each architecture.
     $exportPath=Join-Path $temp 'annotated.pdf'
-    $arguments=[object[]]::new(5)
-    $arguments[0]=$pdfPath; $arguments[1]=$document.PSObject.BaseObject
-    $arguments[2]=[Doctracker.Core.Models.SnipRecord[]]@($snip)
-    $arguments[3]=$exportPath; $arguments[4]=[Threading.CancellationToken]::None
-    for ($argumentIndex=0; $argumentIndex -lt $arguments.Length; $argumentIndex++) { $arguments[$argumentIndex]=$arguments[$argumentIndex].PSObject.BaseObject }
-    $exporterType.GetMethod('Export',[Reflection.BindingFlags]'Static,Public').Invoke($null,$arguments) | Out-Null
+    $exportHost=Join-Path $root 'Doctracker.ExportSmoke.exe'
+    $platform=if ([IntPtr]::Size -eq 4) { 'x86' } else { 'x64' }
+    $compiler=Join-Path $env:WINDIR 'Microsoft.NET/Framework/v4.0.30319/csc.exe'
+    try {
+        & $compiler /nologo /target:exe "/platform:$platform" "/out:$exportHost" "/reference:$root/Doctracker.Core.dll" "$PSScriptRoot/ExportSmoke.cs"
+        if ($LASTEXITCODE -ne 0) { throw 'Export smoke host compilation failed.' }
+        Copy-Item (Join-Path $root 'Doctracker.AddIn.dll.config') ($exportHost+'.config')
+        $invariant=[Globalization.CultureInfo]::InvariantCulture
+        & $exportHost $pdfPath $exportPath $hit.X.ToString($invariant) $hit.Y.ToString($invariant) $hit.Width.ToString($invariant) $hit.Height.ToString($invariant)
+        if ($LASTEXITCODE -ne 0) { throw 'Annotated export or its deployed dependency configuration failed.' }
+    } finally {
+        Remove-Item $exportHost,($exportHost+'.config') -ErrorAction SilentlyContinue
+    }
     $canvas.LoadDocument($exportPath)
     $picture=$type.GetField('picture',$flags).GetValue($canvas)
     if (!$canvas.HasDocument -or [Math]::Abs($picture.Image.Width/$picture.Image.Height-2) -gt .01) { throw 'Annotated PDF export did not preserve page orientation.' }
