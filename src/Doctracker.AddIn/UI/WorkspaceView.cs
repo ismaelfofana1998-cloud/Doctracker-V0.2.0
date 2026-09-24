@@ -78,6 +78,17 @@ namespace Doctracker.AddIn.UI
             Add(root,Canvas,SizeType.Percent,100);
             Cancel.Visible=false;Add(root,Cancel);
             Status.Padding=new Padding(12,8,12,8);Status.BackColor=SnipTheme.Surface;Add(root,Status);
+            Action sizeHeader = () => {
+                // Reserve both caption and native picker heights, including margins.
+                // Nested autosized tables alone can underestimate owner-drawn combos.
+                var height = Math.Max(brand.PreferredHeight, caption.PreferredHeight +
+                    Math.Max(Documents.PreferredHeight, Documents.Font.Height + 14) + Documents.Margin.Vertical) + header.Padding.Vertical;
+                root.RowStyles[0].SizeType=SizeType.Absolute;
+                if (root.RowStyles[0].Height != height) root.RowStyles[0].Height=height;
+            };
+            Documents.FontChanged+=(s,e)=>sizeHeader();
+            header.Layout+=(s,e)=>sizeHeader();
+            sizeHeader();
             Controls.Add(root);
             Resize+=(s,e)=> { var w=Math.Max(100,ClientSize.Width); ModeState.MaximumSize=new Size(w,0);Status.MaximumSize=new Size(w,0);IndexState.MaximumSize=new Size(Math.Max(100,w-155),0); modes.MaximumSize=new Size(w,0); };
         }

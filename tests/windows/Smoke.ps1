@@ -81,6 +81,10 @@ try {
             $view.DrawToBitmap($screenshot,[Drawing.Rectangle]::new(0,0,$view.Width,$view.Height))
             $screenshot.Save((Join-Path $previewDirectory ("workspace-"+$scenario.Width+"-"+$scenario.Scale+".png")))
             $screenshot.Dispose()
+            $header=$view.Controls[0].GetControlFromPosition(0,0)
+            $picker=$header.GetControlFromPosition(1,0)
+            $caption=$picker.GetControlFromPosition(0,0)
+            if ($picker.Top -lt 0 -or $caption.Top -lt 0 -or $picker.Bottom -gt $header.ClientSize.Height) { throw 'Header caption or document picker clipped.' }
             foreach ($name in @('Documents','Query','Search','ModeState','Status','IndexState','Proofs')) {
                 $control=$viewType.GetField($name,$flags).GetValue($view)
                 if ($control -is [Windows.Forms.ComboBox] -and $control.ItemHeight -lt $control.Font.Height + 4) { throw "Native combo text clipped: $name" }
