@@ -104,11 +104,10 @@ namespace Doctracker.Core.Services
                     if (token.Length == 0) continue;
                     var at = raw.Text.IndexOf(token, cursor, StringComparison.Ordinal);
                     if (at < 0) at = raw.Text.IndexOf(token, StringComparison.Ordinal);
-                    if (at >= 0)
+                    if (at >= 0 && rawOwners[at] < 0)
                     {
                         // PDF engines sometimes return boxes in a different order from page text.
-                        if (rawOwners[at] < 0)
-                            for (var i = at; i < at + token.Length; i++) rawOwners[i] = w;
+                        for (var i = at; i < at + token.Length; i++) rawOwners[i] = w;
                         cursor = at + token.Length;
                         continue;
                     }

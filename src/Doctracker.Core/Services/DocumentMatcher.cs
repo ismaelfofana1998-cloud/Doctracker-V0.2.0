@@ -91,7 +91,7 @@ namespace Doctracker.Core.Services
             var isDate = TryDate(query, out date);
             // A bare integer may be an invoice/BL identifier. Decimal/currency/signed
             // values remain financial comparisons; free occurrence search is always literal.
-            var explicitAmount = isAmount && Regex.IsMatch(query, @"[.,+−()€$£]|^-|-$");
+            var explicitAmount = isAmount && Regex.IsMatch(query, @"[.,+−()€$£A-Za-z]|^-|-$");
             if (partialReferences && !isDate && !explicitAmount)
             {
                 var hit = prepared.Find(OccurrenceSearch.SearchTerms(query),cancellation).FirstOrDefault();

@@ -79,6 +79,15 @@ namespace Doctracker.Core.Tests
             Assert.True(Assert.Single(OccurrenceSearch.Find(state, "456")).HasLocation);
         }
 
+        [Fact]
+        public void Repeated_box_occurrences_survive_incomplete_plain_text()
+        {
+            var state = State("REF123A", Word("REF123A", .1, 1), Word("REF123A", .1, 2));
+            var hits = OccurrenceSearch.Find(state, "123");
+            Assert.Equal(2, hits.Count); Assert.All(hits, h => Assert.True(h.HasLocation));
+            Assert.NotEqual(hits[0].Y, hits[1].Y);
+        }
+
         [Theory]
         [InlineData("12\n34")]
         [InlineData("12\r\n34")]
