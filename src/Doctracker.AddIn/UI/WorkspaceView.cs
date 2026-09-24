@@ -50,7 +50,7 @@ namespace Doctracker.AddIn.UI
                 var longest=Documents.Items.Cast<object>().Select(item=>Documents.GetItemText(item)).Aggregate("",(a,b)=>b.Length>a.Length?b:a);
                 Documents.DropDownWidth=Math.Max(Documents.Width,Math.Min(900,TextRenderer.MeasureText(longest,Documents.Font).Width+40));
             };
-            var filters=Row(35,65);filters.Padding=new Padding(8,2,8,4);
+            var filters=Row(35,65);filters.AutoSize=false;filters.Padding=new Padding(8,2,8,4);
             Categories.Margin=new Padding(0,0,8,0);Documents.Margin=Padding.Empty;
             Categories.Anchor=Documents.Anchor=AnchorStyles.Left|AnchorStyles.Right;
             filters.Controls.Add(Categories,0,0);filters.Controls.Add(Documents,1,0);
@@ -77,8 +77,14 @@ namespace Doctracker.AddIn.UI
                 var height=Math.Max(Query.PreferredHeight,Search.GetPreferredSize(Size.Empty).Height)+header.Padding.Vertical;
                 root.RowStyles[0].SizeType=SizeType.Absolute;
                 if(root.RowStyles[0].Height!=height)root.RowStyles[0].Height=height;
+                var selectors=Math.Max(Documents.PreferredHeight,Categories.PreferredHeight)+filters.Padding.Vertical;
+                root.RowStyles[1].SizeType=SizeType.Absolute;
+                if(root.RowStyles[1].Height!=selectors)root.RowStyles[1].Height=selectors;
+                var footerHeight=Math.Max(Status.Font.Height+8,Cancel.GetPreferredSize(Size.Empty).Height);
+                var lastRow=root.RowStyles[root.RowCount-1];lastRow.SizeType=SizeType.Absolute;
+                if(lastRow.Height!=footerHeight)lastRow.Height=footerHeight;
             };
-            Documents.FontChanged+=(s,e)=>sizeHeader();header.Layout+=(s,e)=>sizeHeader();sizeHeader();
+            Documents.FontChanged+=(s,e)=>sizeHeader();Categories.FontChanged+=(s,e)=>sizeHeader();Status.FontChanged+=(s,e)=>sizeHeader();header.Layout+=(s,e)=>sizeHeader();sizeHeader();
             Controls.Add(root);
         }
         public void SetMode(SnipType? type)
