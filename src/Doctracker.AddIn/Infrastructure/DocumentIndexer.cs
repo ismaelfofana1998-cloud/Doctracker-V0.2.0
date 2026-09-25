@@ -26,6 +26,7 @@ namespace Doctracker.AddIn.Infrastructure
             try{oldPages=document.IndexedPages;}
             catch(Exception failure) when(failure is InvalidOperationException || failure is System.Xml.XmlException || failure is IOException || failure is InvalidDataException)
             {oldPages=new List<PageTextRecord>();}
+            var cachedPages=!document.IndexComplete && !forceOcr ? oldPages.Where(p=>!string.IsNullOrWhiteSpace(p.Text)).GroupBy(p=>p.PageNumber).ToDictionary(g=>g.Key,g=>g.First()) : new Dictionary<int,PageTextRecord>();
             var requiresOcr=false;
             var pages = new List<PageTextRecord>();
             if (string.Equals(Path.GetExtension(path), ".pdf", StringComparison.OrdinalIgnoreCase))
@@ -36,8 +37,7 @@ namespace Doctracker.AddIn.Infrastructure
                     for (var index = 0; index < pdf.PageCount; index++)
                     {
                         cancellation.ThrowIfCancellationRequested();
-                        var cached = !document.IndexComplete && !forceOcr ? oldPages.FirstOrDefault(p=>p.PageNumber==index+1 && !string.IsNullOrWhiteSpace(p.Text)) : null;
-                        if(cached!=null){pages.Add(cached);progress?.Invoke(index+1,pdf.PageCount);continue;}
+                        if(cachedPages.TryGetValue(index+1,out var cached)){pages.Add(cached);progress?.Invoke(index+1,pdf.PageCount);continue;}
                         var native = pdf.GetPdfText(index);
                         PageTextRecord page;
                         if (!forceOcr && !string.IsNullOrWhiteSpace(native)) page = ReadNativePage(pdf, index, native);

@@ -33,6 +33,8 @@ namespace Doctracker.AddIn.UI
         private SnipType? activeSnipType = SnipType.Text;
         private readonly ExcelInterop.Workbook workbook;
         private CancellationTokenSource operation;
+        private string pendingStatus;
+        private int statusQueued;
         private ProjectState boundProject;
         private string renderedRevision;
         private readonly Button cancelButton;
@@ -692,6 +694,7 @@ namespace Doctracker.AddIn.UI
 
         private void SetStatus(string message)
         {
+            Interlocked.Exchange(ref pendingStatus,null);
             if (!IsDisposed) status.Text = message;
         }
 
@@ -700,7 +703,14 @@ namespace Doctracker.AddIn.UI
             if (IsDisposed || !IsHandleCreated) return;
             if (InvokeRequired)
             {
-                try { BeginInvoke(new Action<string>(SetStatus), message); } catch (InvalidOperationException) { }
+                Interlocked.Exchange(ref pendingStatus,message);
+                if(Interlocked.Exchange(ref statusQueued,1)!=0)return;
+                try { BeginInvoke(new Action(()=>{
+                    Interlocked.Exchange(ref statusQueued,0);
+                    var latest=Interlocked.Exchange(ref pendingStatus,null);
+                    if(context.IsBusy && latest!=null)SetStatus(latest);
+                })); }
+                catch (InvalidOperationException) {Interlocked.Exchange(ref statusQueued,0);}
             }
             else
             {
