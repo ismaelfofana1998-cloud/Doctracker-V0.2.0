@@ -58,7 +58,7 @@ namespace Doctracker.AddIn
 
         private void Application_WindowActivate(ExcelInterop.Workbook workbook, ExcelInterop.Window window)
         {
-            try { Controller?.RefreshVisible(); DoctrackerRibbon.Instance?.Refresh(); }
+            try { Excel.ExcelProofLinks.Invalidate(workbook); Controller?.RefreshVisible(); DoctrackerRibbon.Instance?.Refresh(); }
             catch (System.Runtime.InteropServices.COMException exception) { System.Diagnostics.Trace.WriteLine(exception); }
         }
         private void Application_WorkbookAfterSave(ExcelInterop.Workbook workbook, bool success)

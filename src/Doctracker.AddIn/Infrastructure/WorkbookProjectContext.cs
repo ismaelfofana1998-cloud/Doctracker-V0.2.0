@@ -78,15 +78,29 @@ namespace Doctracker.AddIn.Infrastructure
             foreach(var cell in cells.LinkedCells(workbook))
             {
                 var ids=cells.GetSnipIds(cell).Where(known.Contains).ToList();if(ids.Count==0)continue;
-                links.Add(new CellLinkRecord {WorksheetName=cell.Worksheet.Name,CellAddress=cell.Address[false,false,ExcelInterop.XlReferenceStyle.xlA1],SnipIds=ids});
+                links.Add(new CellLinkRecord {WorksheetCodeName=cell.Worksheet.CodeName,WorksheetName=cell.Worksheet.Name,CellAddress=cell.Address[false,false,ExcelInterop.XlReferenceStyle.xlA1],SnipIds=ids});
             }
-            Func<CellLinkRecord,string> key=x=>x.WorksheetName+"!"+x.CellAddress+"|"+string.Join(",",x.SnipIds);
+            // Keep recovery metadata for unresolved proofs; saving must not erase the
+            // only remaining evidence of their previous destination.
+            var liveIds=new HashSet<string>(links.SelectMany(link=>link.SnipIds));
+            links.AddRange(State.CellLinks.Select(link=>new CellLinkRecord {WorksheetName=link.WorksheetName,
+                WorksheetCodeName=link.WorksheetCodeName,CellAddress=link.CellAddress,
+                SnipIds=link.SnipIds.Where(id=>known.Contains(id) && !liveIds.Contains(id)).ToList()}).Where(link=>link.SnipIds.Count>0));
+            Func<CellLinkRecord,string> key=x=>x.WorksheetCodeName+"|"+x.WorksheetName+"!"+x.CellAddress+"|"+string.Join(",",x.SnipIds);
             if(!links.Select(key).OrderBy(x=>x).SequenceEqual(State.CellLinks.Select(key).OrderBy(x=>x)))
             {
+                var previous=State.CellLinks;
+                var addresses=State.Snips.ToDictionary(s=>s.Id,s=>new[]{s.WorksheetName,s.CellAddress});
                 State.CellLinks=links;
                 var byId=State.Snips.ToDictionary(s=>s.Id);var seen=new HashSet<string>();
                 foreach(var link in links)foreach(var id in link.SnipIds)if(seen.Add(id)){byId[id].WorksheetName=link.WorksheetName;byId[id].CellAddress=link.CellAddress;}
-                Store.Save(State);
+                try {Store.Save(State);}
+                catch
+                {
+                    State.CellLinks=previous;
+                    foreach(var snip in State.Snips){snip.WorksheetName=addresses[snip.Id][0];snip.CellAddress=addresses[snip.Id][1];}
+                    throw;
+                }
             }
         }
         public void RestoreMetadata(string file)

@@ -46,6 +46,7 @@ namespace Doctracker.AddIn.UI
             try
             {
                 EnsureActiveWorkbook();
+                ExcelProofLinks.Invalidate(workbook);
                 // Validate the live marker: recorded addresses can be stale after row moves.
                 var current=application.Selection as ExcelInterop.Range;
                 if(current!=null && current.Cells.CountLarge==1 && cells.GetSnipIds(current).Contains(snip.Id))return;
@@ -60,7 +61,23 @@ namespace Doctracker.AddIn.UI
                 {
                     target=cells.LinkedCells(workbook).FirstOrDefault(cell=>cells.GetSnipIds(cell).Contains(snip.Id));
                 }
-                if(target==null)throw new InvalidOperationException("La cellule liée est introuvable. Utilisez Récupération > Réparer les liens dans le ruban.");
+                if(target==null)
+                {
+                    if(current==null || current.Cells.CountLarge!=1)
+                        throw new InvalidOperationException("Le lien Excel a disparu. Sélectionnez la cellule de destination, puis cliquez de nouveau sur cette preuve pour la relier.");
+                    ExcelCellGateway.ValidateWritable(current);
+                    if(MessageBox.Show(this,"Le lien Excel a disparu ou sa cellule a été supprimée. Relier cette preuve à la cellule sélectionnée "+
+                        current.Worksheet.Name+"!"+current.Address[false,false]+" ? Sa valeur sera conservée.","Relier la preuve",
+                        MessageBoxButtons.YesNo,MessageBoxIcon.Question)!=DialogResult.Yes)return;
+                    var snapshot=cells.Snapshot(current);application.EnableEvents=false;
+                    try
+                    {
+                        cells.AttachProof(current,snip,context.State.Documents.First(d=>d.Id==snip.DocumentId));
+                        context.CaptureCellLinks();workbook.Saved=false;
+                    }
+                    catch {snapshot.Restore();throw;}
+                    target=current;
+                }
                 if(target.Worksheet.Visible!=ExcelInterop.XlSheetVisibility.xlSheetVisible)
                     throw new InvalidOperationException("La preuve est liée à une feuille masquée : "+target.Worksheet.Name+". Affichez cette feuille pour y accéder.");
                 application.EnableEvents=false;application.Goto(target,true);
@@ -241,6 +258,42 @@ namespace Doctracker.AddIn.UI
                 return !decimal.TryParse(Convert.ToString(target.Value2,System.Globalization.CultureInfo.InvariantCulture),System.Globalization.NumberStyles.Any,System.Globalization.CultureInfo.InvariantCulture,out actual) || actual!=expected;
             }
             return ExcelCellGateway.QueryText(target)!=snip.ExtractedValue;
+        }
+
+        private void DeleteSelectionSnips()
+        {
+            if(context.IsBusy)return;
+            var snapshots=new List<ExcelCellGateway.CellSnapshot>();var events=application.EnableEvents;
+            try
+            {
+                EnsureProject();var selection=cells.GetSelection();
+                var targets=new List<ExcelInterop.Range>();
+                // Iterate proof cells, never all 1,048,576 cells of a selected column.
+                foreach(var cell in cells.LinkedCells(workbook))
+                    if(cell.Worksheet.CodeName==selection.Worksheet.CodeName && application.Intersect(cell,selection)!=null)
+                    {ExcelCellGateway.ValidateWritable(cell);targets.Add(cell);}
+                if(targets.Count==0){SetStatus("Aucun snip lié dans la plage sélectionnée.");return;}
+                if(MessageBox.Show(this,"Retirer les snips de "+targets.Count+" cellule(s) dans "+selection.Address[false,false]+
+                    " ? Les valeurs et formules seront conservées. Les liens hors de cette plage seront conservés.",
+                    "Supprimer les snips de la plage",MessageBoxButtons.YesNo,MessageBoxIcon.Question)!=DialogResult.Yes)return;
+                context.CaptureCellLinks();
+                var selected=targets.Select(cell=>new CellLinkRecord {WorksheetName=cell.Worksheet.Name,
+                    WorksheetCodeName=cell.Worksheet.CodeName,CellAddress=cell.Address[false,false,ExcelInterop.XlReferenceStyle.xlA1],
+                    SnipIds=cells.GetSnipIds(cell).ToList()}).ToList();
+                foreach(var target in targets)snapshots.Add(cells.Snapshot(target));
+                application.EnableEvents=false;
+                foreach(var target in targets)cells.RemoveProof(target);
+                var deleted=context.Snips.DeleteCellLinks(context.State,selected,Environment.UserName);
+                snapshots.Clear();focusedSnipId=null;view.ShowProofs(false);canvas.ClearSelection();UpdateDocumentProofs();context.MarkWorkbookDirty();
+                SetStatus(targets.Count+" cellule(s) déliée(s), "+deleted+" snip(s) supprimé(s). Valeurs conservées.");
+            }
+            catch(Exception exception)
+            {
+                var failures=new List<string>();
+                foreach(var snapshot in snapshots)try{snapshot.Restore();}catch(Exception rollback){failures.Add(rollback.Message);}
+                ShowError(failures.Count==0?exception:new InvalidOperationException(exception.Message+"\nRestauration de cellules incomplète : "+string.Join(" ; ",failures)));
+            }
+            finally {application.EnableEvents=events;}
         }
 
         private void DeleteSnip(string id)

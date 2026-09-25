@@ -27,6 +27,7 @@ namespace Doctracker.AddIn.UI
                     case "TestReference": ChangeTestReference();break;
                     case "ReindexOcr": ReindexOcrAsync();break;
                     case "DeleteSnip": DeleteSnip(focusedSnipId);break;
+                    case "DeleteSelectionSnips": DeleteSelectionSnips();break;
                     case "ImportFolder": ImportFolderAsync();break;
                     case "Categorize": ChangeCategory();break;
                     case "CrossReference": AssignReference();break;
@@ -228,21 +229,35 @@ namespace Doctracker.AddIn.UI
             var snapshots=new List<Excel.ExcelCellGateway.CellSnapshot>();var events=application.EnableEvents;
             try
             {
-                EnsureProject();if(MessageBox.Show(this,"Réattacher les preuves aux cellules enregistrées dans les métadonnées, sans modifier leurs valeurs ? Les feuilles manquantes seront signalées.","Récupération des liens",MessageBoxButtons.YesNo)!=DialogResult.Yes)return;
+                EnsureProject();if(MessageBox.Show(this,"Vérifier les liens actuels et restaurer les liens manquants aux adresses enregistrées ? Les valeurs restent inchangées. Les références de cellules supprimées nécessitent un rattachement manuel.","Récupération des liens",MessageBoxButtons.YesNo)!=DialogResult.Yes)return;
                 application.EnableEvents=false;var repaired=0;var missing=new List<string>();
+                var liveIds=new HashSet<string>(cells.LinkedCells(workbook).SelectMany(cell=>cells.GetSnipIds(cell)));
+                var broken=Excel.ExcelProofLinks.BrokenIds(workbook);var manual=new HashSet<string>();
                 var links=context.State.CellLinks.ToList();
                 var recorded=new HashSet<string>(links.SelectMany(link=>link.SnipIds));
                 links.AddRange(context.State.Snips.Where(s=>!recorded.Contains(s.Id)).GroupBy(s=>new{s.WorksheetName,s.CellAddress}).Select(g=>new CellLinkRecord {WorksheetName=g.Key.WorksheetName,CellAddress=g.Key.CellAddress,SnipIds=g.Select(s=>s.Id).ToList()}));
                 foreach(var group in links)
                 {
-                    ExcelInterop.Worksheet sheet=null;foreach(ExcelInterop.Worksheet item in workbook.Worksheets)if(item.Name==group.WorksheetName){sheet=item;break;}
+                    var ids=group.SnipIds.Where(id=>!liveIds.Contains(id)).ToList();if(ids.Count==0)continue;
+                    foreach(var id in ids.Where(broken.Contains))manual.Add(id);
+                    ids.RemoveAll(broken.Contains);if(ids.Count==0)continue;
+                    ExcelInterop.Worksheet sheet=null;
+                    foreach(ExcelInterop.Worksheet item in workbook.Worksheets)
+                        if(!string.IsNullOrEmpty(group.WorksheetCodeName)?item.CodeName==group.WorksheetCodeName:item.Name==group.WorksheetName){sheet=item;break;}
                     if(sheet==null){missing.Add(group.WorksheetName);continue;}
                     var target=sheet.Range[group.CellAddress];if(target.Cells.CountLarge!=1)throw new InvalidDataException("Adresse de preuve invalide.");
                     Excel.ExcelCellGateway.ValidateWritable(target);snapshots.Add(cells.Snapshot(target));
-                    foreach(var snip in context.State.Snips.Where(s=>group.SnipIds.Contains(s.Id)))cells.AttachProof(target,snip,context.State.Documents.First(d=>d.Id==snip.DocumentId));repaired++;
+                    foreach(var snip in context.State.Snips.Where(s=>ids.Contains(s.Id)))
+                        cells.AttachProof(target,snip,context.State.Documents.First(d=>d.Id==snip.DocumentId));
+                    repaired++;
                 }
-                SetStatus(repaired+" cellule(s) réparée(s). Feuilles manquantes : "+string.Join(", ",missing.Distinct()));
-                if(missing.Count>0)MessageBox.Show(this,"Créez ou renommez ces feuilles puis relancez la réparation : "+string.Join(", ",missing.Distinct()),"Liens non restaurés");
+                context.CaptureCellLinks();if(repaired>0)workbook.Saved=false;
+                snapshots.Clear();
+                SetStatus(repaired+" cellule(s) réparée(s). "+manual.Count+" preuve(s) à relier manuellement.");
+                if(missing.Count>0 || manual.Count>0)MessageBox.Show(this,
+                    "Certains liens ne peuvent pas être rétablis automatiquement."+
+                    (missing.Count>0?"\nFeuilles introuvables : "+string.Join(", ",missing.Distinct()):"")+
+                    "\nSélectionnez la bonne cellule Excel puis cliquez sur la preuve dans le PDF pour la relier.","Liens à vérifier");
             }
             catch(Exception ex){foreach(var snapshot in snapshots)try{snapshot.Restore();}catch{}ShowError(ex);}
             finally{application.EnableEvents=events;}

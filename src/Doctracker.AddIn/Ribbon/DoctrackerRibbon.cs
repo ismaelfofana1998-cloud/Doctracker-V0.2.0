@@ -48,6 +48,7 @@ namespace Doctracker.AddIn.Ribbon
           <toggleButton id='SumSnip' getImage='GetImage' label='Somme' onAction='SumSnip_OnAction' getPressed='SumSnip_GetPressed' size='large'/>
           <toggleButton id='TableSnip' getImage='GetImage' label='Tableau' onAction='TableSnip_OnAction' getPressed='TableSnip_GetPressed' size='large'/>
           <toggleButton id='Comment' getImage='GetImage' label='Commentaire' size='large' onAction='Comment_OnAction' getPressed='Comment_GetPressed'/>
+          <button id='DeleteSelectionSnips' label='Supprimer les snips de la plage' onAction='Command_OnAction'/>
           <button id='DeleteSnip' getImage='GetImage' label='Supprimer un snip' onAction='Command_OnAction'/>
         </group>
         <group id='MatchingGroup'  label='Contrôle'>

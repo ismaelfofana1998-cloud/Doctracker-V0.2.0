@@ -35,6 +35,7 @@ namespace Doctracker.Core.Models
     [Serializable]
     public sealed class CellLinkRecord
     {
+        public string WorksheetCodeName { get; set; } = string.Empty;
         public string WorksheetName { get; set; } = string.Empty;
         public string CellAddress { get; set; } = string.Empty;
         public List<string> SnipIds { get; set; } = new List<string>();

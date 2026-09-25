@@ -368,6 +368,30 @@ try {
     if($canvas.CurrentPageNumber -ne 21){throw 'Vertical scrolling did not activate page 21.'}
     $surfaces=$type.GetField('pagePictures',$flags).GetValue($canvas)
     if($surfaces.Count -gt 3){throw 'Continuous viewer retained too many rendered pages.'}
+    # Zoom beyond the viewport, scroll right, then refresh and switch pages.
+    $type.GetMethod('SetZoom',$flags).Invoke($canvas,[object[]]@(1.25,$false)) | Out-Null
+    $canvas.GoToPage(21)
+    $hostPanel=$type.GetField('pageHost',$flags).GetValue($canvas)
+    if(!$viewport.HorizontalScroll.Visible){throw 'Horizontal scrollbar missing after zoom.'}
+    $viewport.AutoScrollPosition=[Drawing.Point]::new(350,$bounds[20].Top)
+    for($refresh=0;$refresh -lt 5;$refresh++) {
+        $type.GetMethod('RefreshVisiblePages',$flags).Invoke($canvas,@()) | Out-Null
+        [Windows.Forms.Application]::DoEvents()
+    }
+    if($viewport.AutoScrollPosition.X -gt -340){throw 'Refreshing zoomed pages reset horizontal scrolling.'}
+    $surface=$type.GetField('picture',$flags).GetValue($canvas)
+    if($surface.Parent -ne $hostPanel -or $surface.Left -ne $bounds[20].Left){throw 'Page coordinates changed during scroll.'}
+    $screenLeft=$viewport.PointToClient($surface.PointToScreen([Drawing.Point]::Empty)).X
+    if($screenLeft -gt -300){throw 'Zoomed PDF did not move left on screen.'}
+    $canvas.GoToPage(22)
+    if($viewport.AutoScrollPosition.X -gt -340){throw 'Page navigation reset horizontal offset.'}
+    $viewport.AutoScrollPosition=[Drawing.Point]::new(100000,$bounds[21].Top)
+    $type.GetMethod('RefreshVisiblePages',$flags).Invoke($canvas,@()) | Out-Null
+    $surface=$type.GetField('picture',$flags).GetValue($canvas)
+    $right=$viewport.PointToClient($surface.PointToScreen([Drawing.Point]::new($surface.Width,0))).X
+    if($right -gt ($viewport.ClientSize.Width+8)){throw 'Right edge of PDF is unreachable.'}
+    $canvas.GoToPage(21)
+    Write-Host 'PASS: horizontal scroll at zoom, repeated refresh, page navigation, reachable right edge'
     # Drag an existing snip and cancel it; no new snip is created.
     $editable=New-Object Doctracker.Core.Models.SnipRecord
     $editable.PageNumber=21;$editable.X=.2;$editable.Y=.2;$editable.Width=.3;$editable.Height=.15

@@ -85,11 +85,29 @@ namespace Doctracker.Core.Services
             var entry = new AuditEventRecord { Actor = actor ?? "", Action = "SnipDeleted", EntityType = "Snip", EntityId = snipId,
                 Details = snip.WorksheetName + "!" + snip.CellAddress };
             state.Snips.RemoveAt(position);
-            state.CellLinks = previousLinks.Select(link => new CellLinkRecord { WorksheetName = link.WorksheetName,
+            state.CellLinks = previousLinks.Select(link => new CellLinkRecord { WorksheetName = link.WorksheetName, WorksheetCodeName = link.WorksheetCodeName,
                 CellAddress = link.CellAddress, SnipIds = link.SnipIds.Where(id => id != snipId).ToList() }).Where(link => link.SnipIds.Count > 0).ToList();
             state.AuditTrail.Add(entry);
             try { store.Save(state); }
             catch { state.Snips.Insert(position, snip); state.CellLinks = previousLinks; state.AuditTrail.Remove(entry); throw; }
+        }
+
+        // Selection-scoped deletion: shared proofs survive while another cell references them.
+        public int DeleteCellLinks(ProjectState state,IEnumerable<CellLinkRecord> selection,string actor)
+        {
+            var selected=selection.ToList();
+            var affected=new HashSet<string>(selected.SelectMany(link=>link.SnipIds));
+            var previousLinks=state.CellLinks;var previousSnips=state.Snips;
+            Func<CellLinkRecord,string> key=link=>(string.IsNullOrEmpty(link.WorksheetCodeName)?"name:"+link.WorksheetName:"code:"+link.WorksheetCodeName)+"!"+link.CellAddress;
+            var selectedKeys=new HashSet<string>(selected.Select(key));
+            var remaining=previousLinks.Where(link=>!selectedKeys.Contains(key(link))).ToList();
+            var retained=new HashSet<string>(remaining.SelectMany(link=>link.SnipIds));
+            var removed=previousSnips.Where(s=>affected.Contains(s.Id) && !retained.Contains(s.Id)).ToList();
+            var entry=new AuditEventRecord {Actor=actor??"",Action="CellProofsDeleted",EntityType="Selection",
+                Details=selected.Count+" cells; "+removed.Count+" unreferenced snips removed"};
+            state.CellLinks=remaining;state.Snips=previousSnips.Except(removed).ToList();state.AuditTrail.Add(entry);
+            try {store.Save(state);return removed.Count;}
+            catch {state.CellLinks=previousLinks;state.Snips=previousSnips;state.AuditTrail.Remove(entry);throw;}
         }
 
         public void UpdateGeometry(ProjectState state,string id,NormalizedRectangle rectangle,string rawText,string actor,Action<SnipRecord> applyCells=null)

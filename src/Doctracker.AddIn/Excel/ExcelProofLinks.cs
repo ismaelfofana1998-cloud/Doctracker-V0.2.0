@@ -13,14 +13,14 @@ namespace Doctracker.AddIn.Excel
     {
         private const string Prefix = "_DoctrackerProof_";
         private sealed class Link { public string Name, Id; public ExcelInterop.Range Cell; }
-        private sealed class Index { public bool Valid; public readonly Dictionary<string,List<Link>> Cells = new Dictionary<string,List<Link>>(); }
+        private sealed class Index { public bool Valid; public int NameCount; public readonly Dictionary<string,List<Link>> Cells = new Dictionary<string,List<Link>>(); }
         private static readonly ConditionalWeakTable<ExcelInterop.Workbook,Index> indexes = new ConditionalWeakTable<ExcelInterop.Workbook,Index>();
         private static ExcelInterop.Workbook Book(ExcelInterop.Range cell) => (ExcelInterop.Workbook)cell.Worksheet.Parent;
         private static string Key(ExcelInterop.Range cell) => cell.Worksheet.CodeName + "!" + cell.Address[true,true,ExcelInterop.XlReferenceStyle.xlA1];
         public static void Invalidate(ExcelInterop.Workbook book) { if (book != null && indexes.TryGetValue(book,out var index)) index.Valid=false; }
         private static Index Read(ExcelInterop.Workbook book)
         {
-            var index=indexes.GetValue(book,_=>new Index()); if(index.Valid)return index;
+            var index=indexes.GetValue(book,_=>new Index()); if(index.Valid && index.NameCount==book.Names.Count)return index;
             index.Cells.Clear();
             foreach(ExcelInterop.Name name in book.Names)
             {
@@ -36,14 +36,38 @@ namespace Doctracker.AddIn.Excel
                 }
                 catch(COMException) { /* Deleted cells leave #REF names, never reattach to another cell. */ }
             }
-            index.Valid=true; return index;
+            index.NameCount=book.Names.Count; index.Valid=true; return index;
         }
         public static IReadOnlyList<string> Get(ExcelInterop.Range cell)
         {
             if(cell==null || cell.Cells.CountLarge!=1)return new string[0];
-            return Read(Book(cell)).Cells.TryGetValue(Key(cell),out var links)?links.Select(l=>l.Id).Distinct().ToList():(IReadOnlyList<string>)new string[0];
+            var book=Book(cell);var key=Key(cell);var index=Read(book);
+            if(index.Cells.TryGetValue(key,out var cached))
+            {
+                try {if(cached.Any(link=>Key(link.Cell)!=key))Invalidate(book);}
+                catch(COMException){Invalidate(book);}
+            }
+            return Read(book).Cells.TryGetValue(key,out var links)?links.Select(l=>l.Id).Distinct().ToList():(IReadOnlyList<string>)new string[0];
         }
-        public static List<ExcelInterop.Range> Cells(ExcelInterop.Workbook book) => Read(book).Cells.Values.Select(v=>v[0].Cell).ToList();
+        public static List<ExcelInterop.Range> Cells(ExcelInterop.Workbook book)
+        {
+            // Explicit navigation/edit/repair must resolve Excel's current names, even when
+            // a macro changed structure with EnableEvents=false. Never trust old RCWs here.
+            Invalidate(book);
+            return Read(book).Cells.Values.Select(v=>v[0].Cell).ToList();
+        }
+        public static HashSet<string> BrokenIds(ExcelInterop.Workbook book)
+        {
+            var result=new HashSet<string>();
+            foreach(ExcelInterop.Name name in book.Names)
+            {
+                var local=name.Name;var bang=local.LastIndexOf('!');if(bang>=0)local=local.Substring(bang+1);
+                if(!local.StartsWith(Prefix,StringComparison.Ordinal))continue;
+                try {var cell=name.RefersToRange;if(cell==null)result.Add(local.Substring(Prefix.Length).Split('_')[0]);}
+                catch(COMException){result.Add(local.Substring(Prefix.Length).Split('_')[0]);}
+            }
+            return result;
+        }
         public static void Set(ExcelInterop.Range cell,IEnumerable<string> ids)
         {
             var book=Book(cell); var index=Read(book); var key=Key(cell); var wanted=ids.Distinct().ToList();
@@ -59,6 +83,7 @@ namespace Doctracker.AddIn.Excel
                     links.Add(new Link {Name=name,Id=id,Cell=cell});
                 }
                 if(links.Count==0)index.Cells.Remove(key);
+                index.NameCount=book.Names.Count;
             }
             catch {index.Valid=false;throw;}
         }

@@ -20,6 +20,8 @@ namespace Doctracker.AddIn.UI
     internal sealed class DocumentCanvas : UserControl
     {
         private readonly Panel viewport;
+        // Only this host moves during scrolling; page bounds stay in document coordinates.
+        private readonly Panel pageHost = new Panel {Location=Point.Empty,Margin=Padding.Empty};
         private PictureBox picture;
         private readonly PictureBox emptyPicture;
         private readonly Dictionary<int,PictureBox> pagePictures = new Dictionary<int,PictureBox>();
@@ -182,7 +184,8 @@ namespace Doctracker.AddIn.UI
             picture.MouseWheel += wheel; viewport.MouseWheel += wheel;
 
             viewport.Scroll+=(s,e)=>RefreshVisiblePages();
-            viewport.Controls.Add(picture);
+            pageHost.Controls.Add(picture);
+            viewport.Controls.Add(pageHost);
             Controls.Add(viewport);
             Controls.Add(toolbar);
 
@@ -331,7 +334,7 @@ namespace Doctracker.AddIn.UI
                     if((ModifierKeys & Keys.Control)!=0){SetZoom(zoom*(e.Delta>0?1.15:1/1.15),false);if(e is HandledMouseEventArgs handled)handled.Handled=true;}
                     else if(IsHandleCreated)BeginInvoke(new Action(RefreshVisiblePages));
                 };
-                viewport.Controls.Add(surface);
+                pageHost.Controls.Add(surface);
             }
             try
             {
@@ -344,7 +347,7 @@ namespace Doctracker.AddIn.UI
                 {if(imagePageCount>1)source.SelectActiveFrame(FrameDimension.Page,index);surface.Image=new Bitmap(source);}
                 pagePictures[index]=surface;return surface;
             }
-            catch {if(surface!=emptyPicture){viewport.Controls.Remove(surface);surface.Dispose();}throw;}
+            catch {if(surface!=emptyPicture){pageHost.Controls.Remove(surface);surface.Dispose();}throw;}
         }
         private void RenderCurrentPage()
         {
@@ -371,7 +374,8 @@ namespace Doctracker.AddIn.UI
                     top=checked(top+height+16);widest=Math.Max(widest,width);
                 }
                 viewport.AutoScroll=true;
-                viewport.AutoScrollMinSize=new Size(widest+8,top);
+                pageHost.Size=new Size(Math.Max(viewport.ClientSize.Width-8,widest+8),top);
+                viewport.AutoScrollMinSize=pageHost.Size;
                 viewport.AutoScrollPosition=new Point(Math.Max(0,-viewport.AutoScrollPosition.X),Math.Max(0,pageBounds[pageIndex].Top+(int)(fraction*pageBounds[pageIndex].Height)));
                 zoomLabel.Text=Math.Round(zoom*DisplayScale()*100)+" %";
             }
@@ -393,11 +397,11 @@ namespace Doctracker.AddIn.UI
                 foreach(var old in pagePictures.Keys.Where(i=>!keep.Contains(i)).ToList())
                 {
                     var surface=pagePictures[old];pagePictures.Remove(old);var image=surface.Image;surface.Image=null;image?.Dispose();
-                    if(surface!=emptyPicture){viewport.Controls.Remove(surface);surface.Dispose();}else surface.Visible=false;
+                    if(surface!=emptyPicture){pageHost.Controls.Remove(surface);surface.Dispose();}else surface.Visible=false;
                 }
                 foreach(var index in keep)
                 {
-                    var surface=GetPagePicture(index);var bounds=pageBounds[index];bounds.Offset(viewport.AutoScrollPosition);
+                    var surface=GetPagePicture(index);var bounds=pageBounds[index];
                     surface.Bounds=bounds;surface.Visible=true;surface.Invalidate();
                 }
             }
@@ -677,7 +681,7 @@ namespace Doctracker.AddIn.UI
         {
             if (!normalizedSelection.HasValue) return;
             var zone = normalizedSelection.Value;
-            var x = (int)((zone.X + zone.Width / 2) * picture.Width) + viewport.Padding.Left;
+            var x = (int)((zone.X + zone.Width / 2) * picture.Width) + pageBounds[pageIndex].Left;
             var y = (int)((zone.Y + zone.Height / 2) * picture.Height) + pageBounds[pageIndex].Top;
             viewport.AutoScrollPosition = new Point(Math.Max(0, x - viewport.ClientSize.Width / 2), Math.Max(0, y - viewport.ClientSize.Height / 2));
             RefreshVisiblePages();
@@ -730,9 +734,10 @@ namespace Doctracker.AddIn.UI
             foreach(var surface in pagePictures.Values)
             {
                 var image=surface.Image;surface.Image=null;image?.Dispose();
-                if(surface!=emptyPicture){viewport.Controls.Remove(surface);surface.Dispose();}
+                if(surface!=emptyPicture){pageHost.Controls.Remove(surface);surface.Dispose();}
             }
             pagePictures.Clear();pageBounds.Clear();picture=emptyPicture;picture.Image=null;picture.Size=Size.Empty;
+            pageHost.Size=Size.Empty;
             viewport.AutoScrollMinSize=Size.Empty;viewport.AutoScrollPosition=Point.Empty;
             if (pdf != null) pdf.Dispose();
             currentImage = null;

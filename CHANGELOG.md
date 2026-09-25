@@ -1,5 +1,11 @@
 # 0.3.0 — fiabilisation des parcours Excel
 
+## 0.9.1
+- Défilement horizontal stable après zoom et changement de page.
+- Suppression des snips d’une plage, sans supprimer les liens hors sélection ni les valeurs Excel.
+- Relecture des références Excel lors de la navigation/réparation ; rattachement manuel des preuves déliées ; conservation des destinations de récupération et du nom interne de feuille.
+- Tests de suppression transactionnelle et du lecteur Windows ; documentation des caches et des limites du tri/coller.
+
 Rendu/zoom et coordonnées corrigés, OCR ClickOnce x86/x64, PDF natif positionnel,
 TIFF multipage, annulation, isolation des classeurs, Enregistrer sous, écritures
 avec confirmation/restauration, validation/exception, preuves multiples, somme
