@@ -39,6 +39,9 @@ namespace Doctracker.AddIn.UI
 
         private PdfDocument pdf;
         private Image currentImage;
+        private Size imageNaturalSize;
+        private bool displayFaulted;
+        public event Action<Exception> DisplayFailed;
         private string currentPath;
         private int pageIndex;
         private int imagePageCount = 1;
@@ -202,7 +205,7 @@ namespace Doctracker.AddIn.UI
 
         public void LoadDocument(string path)
         {
-            DisposeDocument();
+            DisposeDocument();displayFaulted=false;
             proofs.Clear(); selectedProofId = null;
             if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
             {
@@ -222,7 +225,7 @@ namespace Doctracker.AddIn.UI
                     pdf = PdfDocument.Load(path);
                 }
                 if (pdf == null)
-                    using (var image = Image.FromFile(path)) imagePageCount = DocumentIndexer.ImagePageCount(image);
+                    using (var image = Image.FromFile(path)) {imagePageCount = DocumentIndexer.ImagePageCount(image);imageNaturalSize=image.Size;}
                 RenderCurrentPage();
             }
             catch
@@ -269,29 +272,38 @@ namespace Doctracker.AddIn.UI
         }
 
         public Bitmap CropSelection() => CropRegion(GetNormalizedSelection());
-        public Bitmap CropRegion(RectangleF selection)
+        public Bitmap CropRegion(RectangleF selection) => CropPageRegion(CurrentPageNumber,selection);
+        public Bitmap CropPageRegion(int number,RectangleF selection)
         {
-            if (currentImage == null) throw new InvalidOperationException("No document is open.");
-            var crop = Rectangle.FromLTRB(
-                Math.Max(0, (int)Math.Floor(selection.Left * currentImage.Width)),
-                Math.Max(0, (int)Math.Floor(selection.Top * currentImage.Height)),
-                Math.Min(currentImage.Width, (int)Math.Ceiling(selection.Right * currentImage.Width)),
-                Math.Min(currentImage.Height, (int)Math.Ceiling(selection.Bottom * currentImage.Height)));
-            if (crop.Width < 2 || crop.Height < 2)
-                throw new InvalidOperationException("The selected zone is too small.");
-
-            var output = new Bitmap(crop.Width, crop.Height);
-            var dpiX = currentImage.HorizontalResolution > 0 ? currentImage.HorizontalResolution : 96f;
-            var dpiY = currentImage.VerticalResolution > 0 ? currentImage.VerticalResolution : 96f;
-            output.SetResolution(dpiX, dpiY);
-            using (var graphics = Graphics.FromImage(output))
+            var sourceIndex=number-1;
+            if(sourceIndex<0 || sourceIndex>=PageCount)throw new InvalidOperationException("La page sélectionnée n'est plus disponible.");
+            if(currentImage==null)throw new InvalidOperationException("Aucun document ouvert.");
+            // OCR always reads source pixels, independently of the lightweight preview.
+            if(pdf!=null)
             {
-                graphics.DrawImage(currentImage,
-                    new Rectangle(0, 0, crop.Width, crop.Height),
-                    crop,
-                    GraphicsUnit.Pixel);
+                var size=DocumentIndexer.RenderSize(pdf.PageSizes[sourceIndex]);
+                using(var source=pdf.Render(sourceIndex,size.Width,size.Height,144,144,PdfRenderFlags.Annotations))
+                    return CropImage(source,selection);
             }
-            return output;
+            using(var source=Image.FromFile(currentPath))
+            {
+                if(imagePageCount>1)source.SelectActiveFrame(FrameDimension.Page,sourceIndex);
+                return CropImage(source,selection);
+            }
+        }
+        private static Bitmap CropImage(Image source,RectangleF selection)
+        {
+            var crop=Rectangle.FromLTRB(Math.Max(0,(int)Math.Floor(selection.Left*source.Width)),Math.Max(0,(int)Math.Floor(selection.Top*source.Height)),
+                Math.Min(source.Width,(int)Math.Ceiling(selection.Right*source.Width)),Math.Min(source.Height,(int)Math.Ceiling(selection.Bottom*source.Height)));
+            if(crop.Width<2 || crop.Height<2)throw new InvalidOperationException("La zone sélectionnée est trop petite.");
+            var scale=Math.Min(1,3000d/Math.Max(crop.Width,crop.Height));
+            var output=new Bitmap(Math.Max(1,(int)Math.Ceiling(crop.Width*scale)),Math.Max(1,(int)Math.Ceiling(crop.Height*scale)));
+            try
+            {
+                using(var graphics=Graphics.FromImage(output))graphics.DrawImage(source,new Rectangle(Point.Empty,output.Size),crop,GraphicsUnit.Pixel);
+                return output;
+            }
+            catch {output.Dispose();throw;}
         }
 
         public void ClearSelection()
@@ -304,7 +316,8 @@ namespace Doctracker.AddIn.UI
         private int PageCount => pdf==null ? (currentPath==null?0:imagePageCount) : pdf.PageCount;
         private void InvalidatePages() { foreach(var surface in pagePictures.Values)surface.Invalidate();picture.Invalidate(); }
         public void GoToPage(int number) => ShowPage(number-1);
-        private void ShowPage(int requestedIndex)
+        private void ShowPage(int requestedIndex) => GuardDisplay(()=>ShowPageCore(requestedIndex));
+        private void ShowPageCore(int requestedIndex)
         {
             if(requestedIndex<0 || requestedIndex>=PageCount)return;
             CancelCommentDrag(); selectedCommentId=null; selectedProofId=null; normalizedSelection=null;
@@ -322,7 +335,17 @@ namespace Doctracker.AddIn.UI
         }
         private PictureBox GetPagePicture(int index)
         {
-            if(pagePictures.TryGetValue(index,out var existing))return existing;
+            var size=PreviewSize(index);
+            if(pagePictures.TryGetValue(index,out var existing))
+            {
+                if(existing.Image.Size!=size)
+                {
+                    var replacement=RenderPreview(index,size);var old=existing.Image;existing.Image=replacement;
+                    if(picture==existing)currentImage=replacement;
+                    old.Dispose();
+                }
+                return existing;
+            }
             var surface=index==0?emptyPicture:new PictureBox {SizeMode=PictureBoxSizeMode.StretchImage,BackColor=Color.White,Cursor=Cursors.Cross,TabStop=false};
             surface.Tag=index;
             if(surface!=emptyPicture)
@@ -338,22 +361,47 @@ namespace Doctracker.AddIn.UI
             }
             try
             {
-                if(pdf!=null)
-                {
-                    var size=DocumentIndexer.RenderSize(pdf.PageSizes[index]);
-                    surface.Image=pdf.Render(index,size.Width,size.Height,144,144,PdfRenderFlags.Annotations|PdfRenderFlags.LcdText);
-                }
-                else using(var source=Image.FromFile(currentPath))
-                {if(imagePageCount>1)source.SelectActiveFrame(FrameDimension.Page,index);surface.Image=new Bitmap(source);}
+                surface.Image=RenderPreview(index,size);
                 pagePictures[index]=surface;return surface;
             }
             catch {if(surface!=emptyPicture){pageHost.Controls.Remove(surface);surface.Dispose();}throw;}
         }
+        private Size PreviewSize(int index)
+        {
+            var natural=pdf==null?imageNaturalSize:DocumentIndexer.RenderSize(pdf.PageSizes[index]);
+            var displayed=pageBounds.Count>index?pageBounds[index].Size:new Size(Math.Max(120,viewport.ClientSize.Width),Math.Max(120,viewport.ClientSize.Height));
+            var scale=Math.Min(1,Math.Max(128,Math.Max(displayed.Width,displayed.Height)*1.25)/Math.Max(natural.Width,natural.Height));
+            scale=Math.Min(scale,3000d/Math.Max(natural.Width,natural.Height));
+            return new Size(Math.Max(1,(int)Math.Ceiling(natural.Width*scale)),Math.Max(1,(int)Math.Ceiling(natural.Height*scale)));
+        }
+        private Image RenderPreview(int index,Size size)
+        {
+            if(pdf!=null)return pdf.Render(index,size.Width,size.Height,144,144,PdfRenderFlags.Annotations|PdfRenderFlags.LcdText);
+            using(var source=Image.FromFile(currentPath))
+            {
+                if(imagePageCount>1)source.SelectActiveFrame(FrameDimension.Page,index);
+                return new Bitmap(source,size);
+            }
+        }
+        private void GuardDisplay(Action action)
+        {
+            if(IsDisposed || Disposing || displayFaulted)return;
+            try {action();}
+            catch(Exception failure)
+            {
+                DiagnosticLog.Write("DisplayFailure",failure);
+                if(DisplayFailed==null)throw; // Tests and standalone callers still observe errors.
+                displayFaulted=true;dragging=proofDragging=commentDragging=panning=false;
+                DisplayFailed(failure);
+            }
+        }
+
         private void RenderCurrentPage()
         {
             ActivatePage(GetPagePicture(pageIndex));UpdatePictureLayout();
         }
-        private void UpdatePictureLayout()
+        private void UpdatePictureLayout() => GuardDisplay(()=>UpdatePictureLayoutCore());
+        private void UpdatePictureLayoutCore()
         {
             if(currentImage==null || layingOutPages)return;
             layingOutPages=true;
@@ -366,7 +414,7 @@ namespace Doctracker.AddIn.UI
                 pageBounds.Clear();var top=viewport.Padding.Top;var widest=0;
                 for(var index=0;index<PageCount;index++)
                 {
-                    var natural=pdf==null?new Size(currentImage.Width,currentImage.Height):DocumentIndexer.RenderSize(pdf.PageSizes[index]);
+                    var natural=pdf==null?imageNaturalSize:DocumentIndexer.RenderSize(pdf.PageSizes[index]);
                     var ratio=fitToViewport ? (fitWidth?availableWidth/(double)natural.Width:Math.Min(availableWidth/(double)natural.Width,availableHeight/(double)natural.Height)) : zoom;
                     ratio=Math.Max(.02,Math.Min(3,ratio));if(index==pageIndex)zoom=ratio;
                     var width=Math.Max(2,(int)Math.Round(natural.Width*ratio));var height=Math.Max(2,(int)Math.Round(natural.Height*ratio));
@@ -382,7 +430,8 @@ namespace Doctracker.AddIn.UI
             finally {layingOutPages=false;}
             RefreshVisiblePages();
         }
-        private void RefreshVisiblePages()
+        private void RefreshVisiblePages() => GuardDisplay(()=>RefreshVisiblePagesCore());
+        private void RefreshVisiblePagesCore()
         {
             if(layingOutPages || refreshingPages || currentPath==null || pageBounds.Count==0 || IsDisposed)return;
             refreshingPages=true;
@@ -407,7 +456,8 @@ namespace Doctracker.AddIn.UI
             }
             finally {refreshingPages=false;}
         }
-        private void PaintPage(object sender,PaintEventArgs e)
+        private void PaintPage(object sender,PaintEventArgs e) => GuardDisplay(()=>PaintPageCore(sender,e));
+        private void PaintPageCore(object sender,PaintEventArgs e)
         {
             var surface=(PictureBox)sender;var oldPicture=picture;var oldImage=currentImage;var oldIndex=pageIndex;
             var oldSelection=normalizedSelection;var oldDragging=dragging;var oldPreview=commentPreview;
@@ -420,7 +470,8 @@ namespace Doctracker.AddIn.UI
             finally{picture=oldPicture;currentImage=oldImage;pageIndex=oldIndex;normalizedSelection=oldSelection;dragging=oldDragging;commentPreview=oldPreview;}
         }
 
-        private void SetZoom(double requestedZoom, bool fit)
+        private void SetZoom(double requestedZoom, bool fit) => GuardDisplay(()=>SetZoomCore(requestedZoom,fit));
+        private void SetZoomCore(double requestedZoom, bool fit)
         {
             if (currentImage == null) return;
             fitToViewport = fit;
@@ -434,8 +485,8 @@ namespace Doctracker.AddIn.UI
         private double DisplayScale()
         {
             if (currentImage == null) return 1;
-            var logicalWidth = pdf != null ? pdf.PageSizes[pageIndex].Width * 96d / 72d : currentImage.Width * 96d / Math.Max(1, currentImage.HorizontalResolution);
-            return currentImage.Width / Math.Max(1, logicalWidth);
+            var logicalWidth = pdf != null ? pdf.PageSizes[pageIndex].Width * 96d / 72d : imageNaturalSize.Width;
+            return (pdf!=null?DocumentIndexer.RenderSize(pdf.PageSizes[pageIndex]).Width:imageNaturalSize.Width) / Math.Max(1, logicalWidth);
         }
         public void FitWidth() { fitWidth = true; SetZoom(1d, true); }
         public void FitPage() { fitWidth = false; SetZoom(1d, true); }
@@ -457,7 +508,8 @@ namespace Doctracker.AddIn.UI
         }
 
 
-        private void Picture_MouseDown(object sender, MouseEventArgs e)
+        private void Picture_MouseDown(object sender, MouseEventArgs e) => GuardDisplay(()=>Picture_MouseDownCore(sender,e));
+        private void Picture_MouseDownCore(object sender, MouseEventArgs e)
         {
             ActivatePage(sender as PictureBox);
             if (currentImage == null) return;
@@ -520,7 +572,8 @@ namespace Doctracker.AddIn.UI
             normalizedSelection = null;
         }
 
-        private void Picture_MouseMove(object sender, MouseEventArgs e)
+        private void Picture_MouseMove(object sender, MouseEventArgs e) => GuardDisplay(()=>Picture_MouseMoveCore(sender,e));
+        private void Picture_MouseMoveCore(object sender, MouseEventArgs e)
         {
             if(proofDragging)
             {
@@ -555,7 +608,8 @@ namespace Doctracker.AddIn.UI
             picture.Invalidate();
         }
 
-        private void Picture_MouseUp(object sender, MouseEventArgs e)
+        private void Picture_MouseUp(object sender, MouseEventArgs e) => GuardDisplay(()=>Picture_MouseUpCore(sender,e));
+        private void Picture_MouseUpCore(object sender, MouseEventArgs e)
         {
             if(proofDragging && e.Button==MouseButtons.Left)
             {

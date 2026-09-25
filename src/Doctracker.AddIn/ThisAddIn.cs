@@ -12,6 +12,8 @@ namespace Doctracker.AddIn
 
         private void ThisAddIn_Startup(object sender, EventArgs e)
         {
+            Infrastructure.DiagnosticLog.Start();
+            AppDomain.CurrentDomain.UnhandledException += DiagnosticUnhandledException;
             Controller = new PaneController(this, Application);
             Application.WindowActivate += Application_WindowActivate;
             Application.WorkbookAfterSave += Application_WorkbookAfterSave;
@@ -24,6 +26,8 @@ namespace Doctracker.AddIn
 
         private void ThisAddIn_Shutdown(object sender, EventArgs e)
         {
+            AppDomain.CurrentDomain.UnhandledException -= DiagnosticUnhandledException;
+            Infrastructure.DiagnosticLog.Write("Shutdown");
             Application.WindowActivate -= Application_WindowActivate;
             Application.WorkbookAfterSave -= Application_WorkbookAfterSave;
             Application.WorkbookBeforeSave -= Application_WorkbookBeforeSave;
@@ -85,6 +89,9 @@ namespace Doctracker.AddIn
                 System.Windows.Forms.MessageBox.Show("Attendez ou annulez l'opération Doctracker avant de fermer ce classeur.", "Doctracker");
             }
         }
+
+        private static void DiagnosticUnhandledException(object sender,UnhandledExceptionEventArgs args)
+        { Infrastructure.DiagnosticLog.Write("Unhandled terminating="+args.IsTerminating,args.ExceptionObject as Exception); }
 
         protected override IRibbonExtensibility CreateRibbonExtensibilityObject()
         {

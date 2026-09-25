@@ -184,10 +184,11 @@ namespace Doctracker.AddIn.UI
         private async void ResizeSnip(string id,RectangleF zone)
         {
             if(context.IsBusy)return;
-            var snapshots=new List<ExcelCellGateway.CellSnapshot>();var events=application.EnableEvents;
+            var snapshots=new List<ExcelCellGateway.CellSnapshot>();var events=true;
             SnipRecord snip=null;DocumentRecord doc=null;
             try
             {
+                DiagnosticLog.Write("SnipResizeStart");events=application.EnableEvents;
                 EnsureProject();snip=context.State.Snips.FirstOrDefault(s=>s.Id==id);
                 doc=snip==null?null:context.State.Documents.FirstOrDefault(d=>d.Id==snip.DocumentId);
                 if(doc==null)return;
@@ -206,12 +207,13 @@ namespace Doctracker.AddIn.UI
                     {
                         var path=canvas.CurrentPath;
                         var page=await System.Threading.Tasks.Task.Run(()=>DocumentIndexer.ReadNativePage(path,snip.PageNumber));
+                        operation.Token.ThrowIfCancellationRequested();
                         recognized=ExtractPageSelection(page,zone);
                     }
                     if(recognized==null)
                     {
                         SetStatus("Reconnaissance de la nouvelle zone…");
-                        using(var crop=canvas.CropRegion(zone))recognized=await System.Threading.Tasks.Task.Run(()=>ocr.Recognize(crop));
+                        using(var crop=canvas.CropPageRegion(snip.PageNumber,zone))recognized=await System.Threading.Tasks.Task.Run(()=>ocr.Recognize(crop));
                     }
                     raw=snip.Type==SnipType.Sum?SumSourceText(recognized):recognized.Text;
                 }
@@ -238,8 +240,17 @@ namespace Doctracker.AddIn.UI
             }
             finally
             {
-                application.EnableEvents=events;EndOperation();UpdateDocumentProofs();
-                if(snip!=null && doc!=null && canvas.CurrentPath!=null)canvas.NavigateTo(canvas.CurrentPath,snip);
+                try
+                {
+                    application.EnableEvents=events;
+                    if(!IsDisposed)
+                    {
+                        UpdateDocumentProofs();
+                        if(snip!=null && doc!=null && canvas.CurrentPath!=null)canvas.NavigateTo(canvas.CurrentPath,snip);
+                    }
+                }
+                catch(Exception failure){ShowError(failure);}
+                finally {EndOperation();}
             }
         }
         private bool CellChangedSinceSnip(ExcelInterop.Range target,SnipRecord snip)

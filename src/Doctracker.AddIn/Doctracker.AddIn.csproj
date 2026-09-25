@@ -32,7 +32,7 @@
     <UpdateEnabled>false</UpdateEnabled>
     <TargetCulture>fr-FR</TargetCulture>
     <FallbackCulture>en-US</FallbackCulture>
-    <ApplicationVersion>0.9.1.0</ApplicationVersion>
+    <ApplicationVersion>0.9.2.0</ApplicationVersion>
     <ApplicationRevision>0</ApplicationRevision>
     <BootstrapperEnabled>true</BootstrapperEnabled>
   </PropertyGroup>
@@ -110,6 +110,7 @@
     <Compile Include="Infrastructure\WorkbookProjectContext.cs" />
     <Compile Include="Infrastructure\TesseractOcrEngine.cs" />
     <Compile Include="Infrastructure\DocumentIndexer.cs" />
+    <Compile Include="Infrastructure\DiagnosticLog.cs" />
     <Compile Include="Infrastructure\NativePdfiumLoader.cs" />
     <Compile Include="Infrastructure\ExcelWorkbookParts.cs" />
     <Compile Include="Infrastructure\AnnotatedPdfExporter.cs" />

@@ -1,5 +1,11 @@
 # 0.3.0 — fiabilisation des parcours Excel
 
+## 0.9.2
+- Aperçus PDF/images proportionnés à leur taille affichée pour limiter la mémoire à faible zoom.
+- Découpe OCR depuis la source et depuis la page capturée, indépendamment du zoom et du défilement.
+- Protection des événements du lecteur et des fins de snip ; libération des images en cas d’échec.
+- Diagnostic local borné et sans contenu documentaire ; tests de découpes répétées et cycles de documents.
+
 ## 0.9.1
 - Défilement horizontal stable après zoom et changement de page.
 - Suppression des snips d’une plage, sans supprimer les liens hors sélection ni les valeurs Excel.

@@ -34,6 +34,7 @@ namespace Doctracker.AddIn.Ribbon
             <button id='Backup' label='Sauvegarder les pièces et liens…' onAction='Command_OnAction'/>
             <button id='Restore' label='Restaurer une sauvegarde…' onAction='Command_OnAction'/>
             <button id='RepairLinks' label='Réparer les liens' onAction='Command_OnAction'/>
+            <button id='Diagnostics' label='Diagnostic des erreurs' onAction='Command_OnAction'/>
             <button id='RecoveryFolder' label='Afficher le cache local' onAction='Command_OnAction'/>
             <button id='SharedStorage' label='Stockage autonome / partagé…' onAction='Command_OnAction'/>
           </menu>

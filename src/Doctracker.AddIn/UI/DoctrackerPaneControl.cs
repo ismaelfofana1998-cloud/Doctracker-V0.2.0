@@ -70,6 +70,12 @@ namespace Doctracker.AddIn.UI
             status = view.Status;
             cancelButton = view.Cancel;
             canvas = view.Canvas;
+            canvas.DisplayFailed += failure => {
+                operation?.Cancel();
+                if(!IsDisposed && IsHandleCreated)BeginInvoke(new Action(()=>{
+                    if(!IsDisposed)ShowError(new InvalidOperationException("Le lecteur a rencontré une erreur. Sélectionnez de nouveau le document pour le recharger.",failure));
+                }));
+            };
             WireAnnotationActions();
             view.SetMode(SnipType.Text);
             documents.SelectedIndexChanged += Documents_SelectedIndexChanged;
@@ -213,10 +219,14 @@ namespace Doctracker.AddIn.UI
 
         private async void Canvas_SelectionCompleted(object sender, EventArgs e)
         {
-            if(context.IsBusy)return;
-            if(canvas.CommentMode){CreateDocumentComment();return;}
-            if (!activeSnipType.HasValue) return;
-            await CaptureSnipAsync(activeSnipType.Value);
+            try
+            {
+                if(context.IsBusy || IsDisposed)return;
+                if(canvas.CommentMode){CreateDocumentComment();return;}
+                if (!activeSnipType.HasValue) return;
+                await CaptureSnipAsync(activeSnipType.Value);
+            }
+            catch(Exception failure){ShowError(failure);}
         }
 
         private async Task CaptureSnipAsync(SnipType type)
@@ -230,6 +240,7 @@ namespace Doctracker.AddIn.UI
                 var target = cells.GetSingleTarget();
                 var pageNumber = canvas.CurrentPageNumber;
                 var rectangle = canvas.GetNormalizedSelection();
+                DiagnosticLog.Write("SnipStart "+type+" page="+pageNumber);
                 BeginOperation();
                 PageTextRecord recognized;
                 if (type == SnipType.Validation || type == SnipType.Exception)
@@ -242,6 +253,7 @@ namespace Doctracker.AddIn.UI
                     if (recognized == null && !document.IndexComplete)
                     {
                         var path = canvas.CurrentPath;
+                        DiagnosticLog.Write("SnipNativeText");
                         var native = await Task.Run(() => DocumentIndexer.ReadNativePage(path, pageNumber));
                         operation.Token.ThrowIfCancellationRequested();
                         recognized = ExtractPageSelection(native, rectangle);
@@ -249,7 +261,8 @@ namespace Doctracker.AddIn.UI
                     if (recognized == null)
                     {
                         SetStatus("Reconnaissance du texte dans la zone sélectionnée…");
-                        using (var crop = canvas.CropSelection()) recognized = await Task.Run(() => ocr.Recognize(crop, type == SnipType.Table));
+                        DiagnosticLog.Write("SnipOcr");
+                        using (var crop = canvas.CropPageRegion(pageNumber,rectangle)) recognized = await Task.Run(() => ocr.Recognize(crop, type == SnipType.Table));
                     }
                 }
                 operation.Token.ThrowIfCancellationRequested();
@@ -303,7 +316,9 @@ namespace Doctracker.AddIn.UI
                     }
                 }
                 if (!ConfirmOverwrite(writes, preserveValue || appendSum)) return;
+                DiagnosticLog.Write("SnipExcelCommit count="+writes.Count);
                 CommitWrites(writes, preserveValue || appendSum);
+                DiagnosticLog.Write("SnipCommitted");
                 canvas.ClearSelection();
                 UpdateDocumentProofs();
                 SetStatus(writes.Count + " preuve(s) créée(s). Sélectionnez la prochaine cellule ou dessinez la zone suivante.");
@@ -720,6 +735,7 @@ namespace Doctracker.AddIn.UI
 
         private void ShowError(Exception exception)
         {
+            DiagnosticLog.Write("HandledError",exception);
             if (IsDisposed) return;
             var detail=exception.GetBaseException().Message;
             var message=exception.Message+(detail==exception.Message?"":"\n"+detail);
@@ -747,10 +763,13 @@ namespace Doctracker.AddIn.UI
         private void EndOperation()
         {
             if (operation == null) return;
-            operation.Dispose(); operation = null; context.IsBusy = false;
-            if (IsDisposed) return;
-            try { context.MarkWorkbookDirty(); }
-            catch (System.Runtime.InteropServices.COMException exception) { SetStatus("Enregistrez le classeur : " + exception.Message); }
+            operation.Dispose(); operation = null;
+            try
+            {
+                context.IsBusy = false;
+                if (!IsDisposed)context.MarkWorkbookDirty();
+            }
+            catch(Exception failure){DiagnosticLog.Write("OperationCleanup",failure);if(!IsDisposed)SetStatus("Enregistrez le classeur puis rechargez le panneau.");}
         }
 
         private void SetBusy(bool busy)

@@ -36,6 +36,7 @@ namespace Doctracker.AddIn.UI
                     case "Backup": BackupAsync();break;
                     case "Restore": RestoreBackup();break;
                     case "RepairLinks": RepairLinks();break;
+                    case "Diagnostics": System.IO.Directory.CreateDirectory(DiagnosticLog.DirectoryPath);System.Diagnostics.Process.Start("explorer.exe",DiagnosticLog.DirectoryPath);break;
                     case "RecoveryFolder": System.Diagnostics.Process.Start("explorer.exe",WorkbookProjectContext.CacheRoot);break;
                     case "Reindex": ReindexDocumentsAsync();break;
                     case "Remove": RemoveDocument();break;

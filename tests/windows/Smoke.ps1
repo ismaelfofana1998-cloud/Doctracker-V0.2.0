@@ -409,6 +409,45 @@ try {
     $canvas.DrawToBitmap($continuousShot,[Drawing.Rectangle]::new(0,0,$canvas.Width,$canvas.Height))
     $continuousShot.Save((Join-Path $previewDirectory 'continuous-pages.png'));$continuousShot.Dispose()
     Write-Host 'PASS: continuous vertical scrolling, direct page number, bounded rendering cache, snip geometry edit/cancel'
+    # Many visible pages at very low zoom must not retain full-resolution bitmaps.
+    $type.GetMethod('SetZoom',$flags).Invoke($canvas,[object[]]@(.02,$false)) | Out-Null
+    $canvas.GoToPage(1)
+    $surfaces=$type.GetField('pagePictures',$flags).GetValue($canvas)
+    [long]$pixelBytes=0
+    foreach($entry in $surfaces.Values){$pixelBytes += [long]$entry.Image.Width*$entry.Image.Height*4}
+    if($pixelBytes -gt 32MB){throw "Low-zoom preview cache exceeds 32 MB: $pixelBytes"}
+    $region=[Drawing.RectangleF]::new(.1,.1,.3,.2)
+    for($repeat=0;$repeat -lt 40;$repeat++) {
+        $canvas.GoToPage(($repeat % 30)+1)
+        $crop=$canvas.CropPageRegion(($repeat % 30)+1,$region)
+        try {if($crop.Width -lt 449 -or $crop.Height -lt 449){throw 'OCR crop incorrectly used preview resolution.'}}
+        finally {$crop.Dispose()}
+    }
+    # The captured page remains explicit even if layout changes the visible page.
+    $canvas.GoToPage(20)
+    $crop=$canvas.CropPageRegion(1,$region);$crop.Dispose()
+    for($repeat=0;$repeat -lt 8;$repeat++) {
+        $canvas.LoadDocument($multiPath)
+        $canvas.GoToPage(15)
+        $canvas.ClearDocument()
+        [Windows.Forms.Application]::DoEvents()
+    }
+    $canvas.LoadDocument($multiPath)
+    Write-Host 'PASS: low-zoom bitmap budget, 40 source-resolution crops, explicit crop page, repeated open/close'
+    $script:displayFailureCount=0
+    $failureHandler=[Action[Exception]]{param($failure) $script:displayFailureCount++}
+    $canvas.add_DisplayFailed($failureHandler)
+    $fail=[Action]{throw [InvalidOperationException]::new('Synthetic display failure')}
+    $guard=$type.GetMethod('GuardDisplay',$flags)
+    $guard.Invoke($canvas,[object[]]@($fail)) | Out-Null
+    $guard.Invoke($canvas,[object[]]@($fail)) | Out-Null
+    if($script:displayFailureCount -ne 1){throw 'Display error was not reported once and stopped.'}
+    $canvas.LoadDocument($multiPath)
+    if($type.GetField('displayFaulted',$flags).GetValue($canvas)){throw 'Reload did not recover the viewer.'}
+    $canvas.remove_DisplayFailed($failureHandler)
+    Write-Host 'PASS: contained display failure and recovery by reloading'
+
+
 } finally {
     if ($canvas) { $canvas.Dispose() }
     if ($ocr) { $ocr.Dispose() }
