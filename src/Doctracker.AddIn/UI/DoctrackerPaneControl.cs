@@ -103,7 +103,7 @@ namespace Doctracker.AddIn.UI
                 try
                 {
                     EnsureProject(); BeginOperation();
-                    var errors = await IndexMissingAsync(VisibleDocuments().ToList(), true, true);
+                    var errors = await IndexMissingAsync(VisibleDocuments().ToList(), true, true).OnUi(this);
                     BindDocuments();
                     SetStatus(errors.Count == 0 ? "Index mis à jour." : errors.Count + " pièce(s) à vérifier.");
                     if (errors.Count > 0) MessageBox.Show(this, string.Join("\n", errors), "Indexation");
@@ -181,7 +181,7 @@ namespace Doctracker.AddIn.UI
                 })
                 {
                     if (dialog.ShowDialog() != DialogResult.OK) return;
-                    await ImportPathsAsync(dialog.FileNames, null);
+                    await ImportPathsAsync(dialog.FileNames, null).OnUi(this);
                 }
             }
             catch (Exception exception) { ShowError(exception); }
@@ -198,7 +198,7 @@ namespace Doctracker.AddIn.UI
                 var token = operation.Token;
                 result = await Task.Run(() => DocumentImportBatch.Run(context.Store, context.State, paths,
                     path => WordDocumentImporter.Import(context, path, categoryFor == null ? currentFolder : categoryFor(path), false, token),
-                    (count, name) => SetStatusThreadSafe("Import " + (count + 1) + " · " + name), token));
+                    (count, name) => SetStatusThreadSafe("Import " + (count + 1) + " · " + name), token)).OnUi(this);
             }
             finally
             {
@@ -224,7 +224,7 @@ namespace Doctracker.AddIn.UI
                 if(context.IsBusy || IsDisposed)return;
                 if(canvas.CommentMode){CreateDocumentComment();return;}
                 if (!activeSnipType.HasValue) return;
-                await CaptureSnipAsync(activeSnipType.Value);
+                await CaptureSnipAsync(activeSnipType.Value).OnUi(this);
             }
             catch(Exception failure){ShowError(failure);}
         }
@@ -254,7 +254,7 @@ namespace Doctracker.AddIn.UI
                     {
                         var path = canvas.CurrentPath;
                         DiagnosticLog.Write("SnipNativeText");
-                        var native = await Task.Run(() => DocumentIndexer.ReadNativePage(path, pageNumber));
+                        var native = await Task.Run(() => DocumentIndexer.ReadNativePage(path, pageNumber)).OnUi(this);
                         operation.Token.ThrowIfCancellationRequested();
                         recognized = ExtractPageSelection(native, rectangle);
                     }
@@ -263,7 +263,7 @@ namespace Doctracker.AddIn.UI
                         SetStatus("Reconnaissance du texte dans la zone sélectionnée…");
                         DiagnosticLog.Write("SnipOcr");
                         var sourcePath=canvas.CurrentPath;var token=operation.Token;
-                        recognized = await Task.Run(() => ocr.RecognizeRegion(sourcePath,pageNumber,rectangle,type==SnipType.Table,token));
+                        recognized = await Task.Run(() => ocr.RecognizeRegion(sourcePath,pageNumber,rectangle,type==SnipType.Table,token)).OnUi(this);
                     }
                 }
                 operation.Token.ThrowIfCancellationRequested();
@@ -343,7 +343,7 @@ namespace Doctracker.AddIn.UI
                 if (string.IsNullOrWhiteSpace(query))
                     throw new InvalidOperationException("La cellule active est vide.");
                 searchBox.Text = query;
-                await SearchDocumentsAsync(query);
+                await SearchDocumentsAsync(query).OnUi(this);
             }
             catch (Exception exception)
             {
@@ -354,7 +354,7 @@ namespace Doctracker.AddIn.UI
         public async void SearchFromPane()
         {
             if(string.IsNullOrWhiteSpace(searchBox.Text)){SearchSelection();return;}
-            await SearchDocumentsAsync(searchBox.Text);
+            await SearchDocumentsAsync(searchBox.Text).OnUi(this);
         }
 
         private async Task SearchDocumentsAsync(string query)
@@ -367,11 +367,11 @@ namespace Doctracker.AddIn.UI
                 BeginOperation();
                 searchResults.DataSource = null; view.HideResults();
                 var scope=SearchScope();
-                var errors = await PrepareSearchTextAsync(scope.Documents);
+                var errors = await PrepareSearchTextAsync(scope.Documents).OnUi(this);
                 scope.Documents=scope.Documents.Where(d=>d.IndexComplete && string.IsNullOrEmpty(d.IndexError)).ToList();
                 var results = await Task.Run(() => OccurrenceSearch.Find(scope, query, 201, operation.Token)
                     .Select(candidate => new SearchResultItem { Candidate = candidate,
-                        Document = context.State.Documents.First(item => item.Id == candidate.DocumentId) }).ToList());
+                        Document = context.State.Documents.First(item => item.Id == candidate.DocumentId) }).ToList()).OnUi(this);
                 operation.Token.ThrowIfCancellationRequested();
                 var truncated=results.Count>200;if(truncated)results=results.Take(200).ToList();
                 searchResults.DataSource = results;
@@ -445,10 +445,10 @@ namespace Doctracker.AddIn.UI
                 for (var row = 1; row <= rowCount; row++)
                     queries.Add(Enumerable.Range(1, columnCount).Select(column => ExcelCellGateway.QueryText((ExcelInterop.Range)input.Cells[row, column])).ToArray());
                 BeginOperation();
-                var errors = await PrepareSearchTextAsync(VisibleDocuments().ToList());
+                var errors = await PrepareSearchTextAsync(VisibleDocuments().ToList()).OnUi(this);
                 if (errors.Count > 0) throw new InvalidOperationException("Matching interrompu : certaines pièces ne sont pas indexées.\n" + string.Join("\n", errors));
                 var scope=SearchScope();scope.Documents=scope.Documents.Where(d=>d.IndexComplete).ToList();
-                var results = await Task.Run(() => context.Matcher.FindBatch(scope,queries.Select(q=>(IReadOnlyList<string>)q).ToList(),true,operation.Token));
+                var results = await Task.Run(() => context.Matcher.FindBatch(scope,queries.Select(q=>(IReadOnlyList<string>)q).ToList(),true,operation.Token)).OnUi(this);
                 operation.Token.ThrowIfCancellationRequested();
                 EnsureActiveWorkbook();
                 var writes = new List<PendingWrite>();
@@ -786,7 +786,7 @@ namespace Doctracker.AddIn.UI
         {
             var scope=documentsToSearch.ToList();
             SetStatus("Lecture du texte natif · "+scope.Count+" document(s) dans le dossier sélectionné…");
-            var errors=await IndexMissingAsync(scope,false,false,false);
+            var errors=await IndexMissingAsync(scope,false,false,false).OnUi(this);
             operation.Token.ThrowIfCancellationRequested();
             var scanned=scope.Where(d=>!d.IndexComplete && string.IsNullOrEmpty(d.IndexError)).ToList();
             if(scanned.Count==0)return errors;
@@ -794,7 +794,7 @@ namespace Doctracker.AddIn.UI
                 "Reconnaissance nécessaire",MessageBoxButtons.YesNo,MessageBoxIcon.Question)!=DialogResult.Yes)
                 throw new OperationCanceledException();
             SetStatus("Reconnaissance en cours · "+scanned.Count+" document(s)…");
-            errors.AddRange(await IndexMissingAsync(scanned,false,false,true));
+            errors.AddRange(await IndexMissingAsync(scanned,false,false,true).OnUi(this));
             return errors;
         }
 

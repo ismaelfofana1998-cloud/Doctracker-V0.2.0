@@ -383,6 +383,21 @@ try {
     $parser=New-Object Doctracker.Core.Services.TextValueParser
     if($parser.Parse([Doctracker.Core.Models.SnipType]::Sum,$sumText) -ne '210'){throw 'Sum joined separate columns into a thousands group.'}
     Write-Host 'PASS: snip sum preserves separate numeric columns'
+    # Office can call us without a UI SynchronizationContext: success, failure and
+    # cancellation must all resume on the owner thread before touching GDI/Excel.
+    Add-Type -Path (Join-Path $PSScriptRoot 'UiContinuationProbe.cs') -ReferencedAssemblies 'System.Windows.Forms.dll','System.Core.dll'
+    foreach($generic in @($false,$true)) {
+        foreach($outcome in @('success','fault','cancel','completed')) {
+            $probe=[UiContinuationProbe]::Run($assembly,$canvas,$outcome,$generic)
+            $deadline=[DateTime]::UtcNow.AddSeconds(5)
+            while(!$probe.IsCompleted -and [DateTime]::UtcNow -lt $deadline) {
+                [Windows.Forms.Application]::DoEvents()
+                Start-Sleep -Milliseconds 5
+            }
+            if(!$probe.IsCompleted){throw "UI continuation timed out: $outcome"}
+            Write-Host $probe.GetAwaiter().GetResult()
+        }
+    }
     # Thirty-page native PDF: scroll to arbitrary pages with a bounded bitmap cache.
     $pageTotal=30; $fontId=3+2*$pageTotal
     $multiObjects=[Collections.Generic.List[string]]::new()
@@ -455,6 +470,38 @@ try {
     $canvas.DrawToBitmap($continuousShot,[Drawing.Rectangle]::new(0,0,$canvas.Width,$canvas.Height))
     $continuousShot.Save((Join-Path $previewDirectory 'continuous-pages.png'));$continuousShot.Dispose()
     Write-Host 'PASS: continuous vertical scrolling, direct page number, bounded rendering cache, snip geometry edit/cancel'
+    # A new page control can synchronously request another refresh during layout.
+    $script:nestedRefreshes=0
+    $nestedLayout=[Windows.Forms.ControlEventHandler]{param($sender,$args)
+        $script:nestedRefreshes++
+        $type.GetMethod('RefreshVisiblePages',$flags).Invoke($canvas,@()) | Out-Null
+        $type.GetMethod('UpdatePictureLayout',$flags).Invoke($canvas,@()) | Out-Null
+    }
+    $hostPanel.add_ControlAdded($nestedLayout)
+    try {
+        for($repeat=0;$repeat -lt 32;$repeat++) {
+            $canvas.Enabled=$false
+            $editable.PageNumber=2+($repeat % 27)
+            $editable.Width=.2+($repeat % 3)*.03
+            $canvas.SetProofs($proofList)
+            $canvas.NavigateTo($multiPath,$editable)
+            $type.GetMethod('SetZoom',$flags).Invoke($canvas,[object[]]@((.25+($repeat % 3)*.15),$false)) | Out-Null
+            $canvas.Enabled=$true
+            [Windows.Forms.Application]::DoEvents()
+            $activeBefore=$canvas.CurrentPageNumber
+            $shot=[Drawing.Bitmap]::new($canvas.Width,$canvas.Height)
+            try {$canvas.DrawToBitmap($shot,[Drawing.Rectangle]::new(0,0,$canvas.Width,$canvas.Height))}
+            finally {$shot.Dispose()}
+            if($canvas.CurrentPageNumber -ne $activeBefore){throw 'Painting changed the active page.'}
+            foreach($pageSurface in $surfaces.Values) {
+                if($pageSurface.IsDisposed -or $null -eq $pageSurface.Image -or $pageSurface.Image.Width -lt 1){throw 'Preview was retired while still visible.'}
+            }
+            if($surfaces.Count -gt 4){throw 'Repeated snip navigation leaked cached pages.'}
+        }
+    }
+    finally {$hostPanel.remove_ControlAdded($nestedLayout);$canvas.Enabled=$true}
+    if($script:nestedRefreshes -lt 5){throw 'Nested layout regression was not exercised.'}
+    Write-Host 'PASS: 32 snip resize/navigation/zoom cycles, nested layout, bitmap lifetime and stable active page'
     # Many visible pages at very low zoom must not retain full-resolution bitmaps.
     $type.GetMethod('SetZoom',$flags).Invoke($canvas,[object[]]@(.02,$false)) | Out-Null
     $canvas.GoToPage(1)

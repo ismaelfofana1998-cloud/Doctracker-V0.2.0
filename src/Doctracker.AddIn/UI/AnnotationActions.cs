@@ -206,7 +206,7 @@ namespace Doctracker.AddIn.UI
                     if(recognized==null)
                     {
                         var path=canvas.CurrentPath;
-                        var page=await System.Threading.Tasks.Task.Run(()=>DocumentIndexer.ReadNativePage(path,snip.PageNumber));
+                        var page=await System.Threading.Tasks.Task.Run(()=>DocumentIndexer.ReadNativePage(path,snip.PageNumber)).OnUi(this);
                         operation.Token.ThrowIfCancellationRequested();
                         recognized=ExtractPageSelection(page,zone);
                     }
@@ -214,7 +214,7 @@ namespace Doctracker.AddIn.UI
                     {
                         SetStatus("Reconnaissance de la nouvelle zone…");
                         var sourcePath=canvas.CurrentPath;var token=operation.Token;var sourcePage=snip.PageNumber;
-                        recognized=await System.Threading.Tasks.Task.Run(()=>ocr.RecognizeRegion(sourcePath,sourcePage,zone,false,token));
+                        recognized=await System.Threading.Tasks.Task.Run(()=>ocr.RecognizeRegion(sourcePath,sourcePage,zone,false,token)).OnUi(this);
                     }
                     raw=snip.Type==SnipType.Sum?SumSourceText(recognized):recognized.Text;
                 }
@@ -231,7 +231,7 @@ namespace Doctracker.AddIn.UI
                             target.Value2=(double)linked.Sum(s=>decimal.Parse(s.ExtractedValue,System.Globalization.CultureInfo.InvariantCulture));
                     }
                 });
-                snapshots.Clear();SetStatus("Snip mis à jour · "+targets.Count+" cellule(s) actualisée(s).");
+                DiagnosticLog.Write("SnipResizeCommitted");snapshots.Clear();SetStatus("Snip mis à jour · "+targets.Count+" cellule(s) actualisée(s).");
             }
             catch(OperationCanceledException){SetStatus("Modification du snip annulée.");}
             catch(Exception failure)

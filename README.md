@@ -1,11 +1,11 @@
-# Doctracker 0.9.3 — complément Excel Windows
+# Doctracker 0.9.4 — complément Excel Windows
 
 Doctracker importe des PDF, images et fichiers Word (via Word installé), les classe par catégories et intègre les pièces
 au classeur Excel, ou les référence dans un emplacement réseau partagé. Il permet
 de sélectionner des zones, extraire leur contenu dans Excel, associer plusieurs
 preuves à une cellule et revenir à la source pour la revue.
 
-Voir [l’OCR isolé 0.9.3](docs/OCR_ISOLE_0.9.3.md), [la stabilisation des snips 0.9.2](docs/STABILITE_0.9.2.md), [les corrections zoom et liens 0.9.1](docs/CORRECTIONS_0.9.1.md), [le nouveau flux 0.9 : lecture continue, snips modifiables et enregistrement avec Excel](docs/FLUX_0.9.md), [la recherche par caractères et les sauvegardes allégées 0.8.3](docs/RECHERCHE_0.8.3.md), [le nouvel import et le panneau compact 0.8.2](docs/IMPORT_0.8.2.md), [la stabilisation 0.8.1](docs/STABILISATION_0.8.1.md), [les corrections 0.8 : recherche, dossiers et manipulation directe](docs/CORRECTIONS_0.8.md), [les améliorations 0.7 : espace, recherche et annotations](docs/ERGONOMIE_0.7.md), [les ajouts 0.6 : édition, Word et lecture](docs/EDITION_0.6.md) et [le guide 0.5 : partage, catégories, Xref et récupération](docs/PORTABILITE_0.5.md).
+Voir [la correction du lecteur 0.9.4](docs/LECTEUR_0.9.4.md), [l’OCR isolé 0.9.3](docs/OCR_ISOLE_0.9.3.md), [la stabilisation des snips 0.9.2](docs/STABILITE_0.9.2.md), [les corrections zoom et liens 0.9.1](docs/CORRECTIONS_0.9.1.md), [le nouveau flux 0.9 : lecture continue, snips modifiables et enregistrement avec Excel](docs/FLUX_0.9.md), [la recherche par caractères et les sauvegardes allégées 0.8.3](docs/RECHERCHE_0.8.3.md), [le nouvel import et le panneau compact 0.8.2](docs/IMPORT_0.8.2.md), [la stabilisation 0.8.1](docs/STABILISATION_0.8.1.md), [les corrections 0.8 : recherche, dossiers et manipulation directe](docs/CORRECTIONS_0.8.md), [les améliorations 0.7 : espace, recherche et annotations](docs/ERGONOMIE_0.7.md), [les ajouts 0.6 : édition, Word et lecture](docs/EDITION_0.6.md) et [le guide 0.5 : partage, catégories, Xref et récupération](docs/PORTABILITE_0.5.md).
 
 ## Installer et utiliser
 

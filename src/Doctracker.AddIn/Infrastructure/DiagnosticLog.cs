@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
+using System.Threading;
 
 namespace Doctracker.AddIn.Infrastructure
 {
@@ -22,7 +23,7 @@ namespace Doctracker.AddIn.Infrastructure
                     if(File.Exists(path) && new FileInfo(path).Length>256*1024)
                     {var previous=path+".previous";if(File.Exists(previous))File.Delete(previous);File.Move(path,previous);}
                     var detail=error==null?"":(" | "+error.GetType().FullName+" 0x"+error.HResult.ToString("X8")+" | "+error.StackTrace);
-                    File.AppendAllText(path,DateTime.UtcNow.ToString("O")+" | "+(Environment.Is64BitProcess?"x64":"x86")+" | "+stage+detail+Environment.NewLine,Encoding.UTF8);
+                    File.AppendAllText(path,DateTime.UtcNow.ToString("O")+" | "+(Environment.Is64BitProcess?"x64":"x86")+" | thread="+Thread.CurrentThread.ManagedThreadId+" "+Thread.CurrentThread.GetApartmentState()+" | "+stage+detail+Environment.NewLine,Encoding.UTF8);
                 }
             }
             catch { /* Diagnostics must never break Excel, even on a full or locked disk. */ }

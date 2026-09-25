@@ -51,7 +51,7 @@ namespace Doctracker.AddIn.UI
                 EnsureProject();var doc=SelectedDocument;if(doc==null)return;
                 BeginOperation();SetStatus("Reconnaissance OCR du document actif…");
                 await Task.Run(()=>new DocumentIndexer(context.Store,ocr).Index(context.State,doc,
-                    (page,count)=>SetStatusThreadSafe("OCR : "+page+" / "+count),operation.Token,true));
+                    (page,count)=>SetStatusThreadSafe("OCR : "+page+" / "+count),operation.Token,true)).OnUi(this);
                 BindDocuments();context.MarkWorkbookDirty();SetStatus("OCR terminé. Relancez la recherche.");
             }
             catch(OperationCanceledException){SetStatus("OCR annulé. L'ancien index est conservé.");}
@@ -120,7 +120,7 @@ namespace Doctracker.AddIn.UI
                     await ImportPathsAsync(EnumerateDocuments(root,enumerationErrors), file => {
                         var relative=Path.GetDirectoryName(file).Substring(root.TrimEnd(Path.DirectorySeparatorChar).Length).Trim(Path.DirectorySeparatorChar);
                         return string.IsNullOrWhiteSpace(relative)?category:category+" / "+relative.Replace(Path.DirectorySeparatorChar.ToString()," / ");
-                    });
+                    }).OnUi(this);
                     if(enumerationErrors.Count>0)MessageBox.Show(this,string.Join("\n",enumerationErrors.Take(30)),"Dossiers non accessibles");
                 }
             }
@@ -206,7 +206,7 @@ namespace Doctracker.AddIn.UI
             try
             {
                 EnsureProject();using(var dialog=new SaveFileDialog {Filter="Sauvegarde Doctracker|*.dtpack",DefaultExt="dtpack",AddExtension=true,FileName="Doctracker-"+DateTime.Today.ToString("yyyyMMdd")+".dtpack"})
-                {if(dialog.ShowDialog(this)!=DialogResult.OK)return;context.CaptureCellLinks();BeginOperation();await Task.Run(()=>RecoveryArchive.Export(context.Store,context.State,dialog.FileName,operation.Token));SetStatus("Sauvegarde complète créée : pièces, catégories, index et liens.");}
+                {if(dialog.ShowDialog(this)!=DialogResult.OK)return;context.CaptureCellLinks();BeginOperation();await Task.Run(()=>RecoveryArchive.Export(context.Store,context.State,dialog.FileName,operation.Token)).OnUi(this);SetStatus("Sauvegarde complète créée : pièces, catégories, index et liens.");}
             }
             catch(OperationCanceledException){SetStatus("Sauvegarde annulée.");}catch(Exception ex){ShowError(ex);}finally{EndOperation();}
         }
@@ -285,7 +285,7 @@ namespace Doctracker.AddIn.UI
                             SetStatusThreadSafe("Export : "+doc.DisplayName);
                         }
                         return failures;
-                    });
+                    }).OnUi(this);
                     SetStatus((docs.Count-errors.Count)+" PDF annotés exportés. Les originaux sont conservés.");if(errors.Count>0)MessageBox.Show(this,string.Join("\n",errors),"Exports à vérifier");
                 }
             }
@@ -305,10 +305,10 @@ namespace Doctracker.AddIn.UI
                         if(dialog.ShowDialog(this)!=DialogResult.OK)return;
                         if(!dialog.SelectedPath.StartsWith(@"\\"))throw new InvalidOperationException("Choisissez un chemin réseau UNC (\\\\serveur\\partage), identique pour tous les utilisateurs. Un dossier OneDrive personnel ou une lettre de lecteur locale n'est pas portable.");
                         var destination=dialog.SelectedPath;BeginOperation();
-                        await Task.Run(()=>SharedVault.Publish(destination,context.Store,context.State,operation.Token));context.State.SharedVaultPath=destination;
+                        await Task.Run(()=>SharedVault.Publish(destination,context.Store,context.State,operation.Token)).OnUi(this);context.State.SharedVaultPath=destination;
                     }
                 }
-                else {BeginOperation();await Task.Run(()=>{foreach(var doc in context.State.Documents){operation.Token.ThrowIfCancellationRequested();context.Store.ResolveDocumentPath(doc);}});context.State.SharedVaultPath="";}
+                else {BeginOperation();await Task.Run(()=>{foreach(var doc in context.State.Documents){operation.Token.ThrowIfCancellationRequested();context.Store.ResolveDocumentPath(doc);}}).OnUi(this);context.State.SharedVaultPath="";}
                 try{context.Store.Save(context.State);}catch{context.State.SharedVaultPath=old;throw;}
                 context.MarkWorkbookDirty();SetStatus(response==DialogResult.Yes?"Mode partagé. Enregistrez Excel pour transmettre les références.":"Mode autonome. Enregistrez Excel pour intégrer toutes les pièces.");
             }
