@@ -75,7 +75,7 @@ namespace Doctracker.AddIn.UI
                         g.DrawRectangle(pen,4,5,16,15); g.DrawLine(pen,4,10,20,10);
                         if(key=="Date") { g.DrawLine(pen,8,3,8,7); g.DrawLine(pen,16,3,16,7); g.DrawRectangle(pen,8,13,3,3); }
                         else {g.DrawLine(pen,4,15,20,15);g.DrawLine(pen,10,5,10,20);g.DrawLine(pen,15,5,15,20);} break;
-                    case "SearchDocuments":
+                    case "OcrDocuments":case "SearchDocuments":
                         g.DrawEllipse(pen,4,3,12,12);g.DrawLine(pen,15,15,21,21);break;
                     case "ImportDocuments": case "Plus":
                         g.DrawLine(pen,12,5,12,19);g.DrawLine(pen,5,12,19,12);break;

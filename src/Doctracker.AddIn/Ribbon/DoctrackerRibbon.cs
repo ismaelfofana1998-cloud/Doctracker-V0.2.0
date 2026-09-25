@@ -20,6 +20,7 @@ namespace Doctracker.AddIn.Ribbon
         <group id='ProjectGroup' label='Dossier'>
           <button id='OpenPane' getImage='GetImage' label='Ouvrir Doctracker' size='large' onAction='OpenPane_OnAction'/>
           <button id='ImportDocuments' getImage='GetImage' label='Importer' size='large' onAction='ImportDocuments_OnAction'/>
+          <button id='OcrDocuments' getImage='GetImage' label='OCR' size='large' screentip='Reconnaître des documents' supertip='Sélectionnez plusieurs documents ou un dossier, puis lancez la reconnaissance du texte.' onAction='Command_OnAction'/>
           <button id='CrossReference' getImage='GetImage' label='Créer / modifier Xref' size='large' onAction='Command_OnAction'/>
           <button id='ExportPdf' getImage='GetImage' label='Exporter' size='large' onAction='Command_OnAction'/>
           <menu id='DocumentsMenu' label='Documents' getImage='GetImage'>

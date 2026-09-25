@@ -1,3 +1,11 @@
+# 0.9.5 — OCR sélectionné et traitement groupé
+
+- Bouton OCR, sélection multiple et traitement par dossier.
+- Matching initial sur les documents prêts, extension choisie sans OCR imposé.
+- Lots isolés de 16 pages maximum avec moteur réutilisé et rendu hors Excel.
+- Édition Excel au double-clic restaurée ; suivi de sélection regroupé.
+- Détails et limites : `docs/OCR_SELECTION_0.9.5.md`.
+
 # 0.3.0 — fiabilisation des parcours Excel
 
 ## 0.9.3

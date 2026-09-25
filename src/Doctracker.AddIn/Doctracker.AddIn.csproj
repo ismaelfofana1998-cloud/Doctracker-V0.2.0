@@ -32,7 +32,7 @@
     <UpdateEnabled>false</UpdateEnabled>
     <TargetCulture>fr-FR</TargetCulture>
     <FallbackCulture>en-US</FallbackCulture>
-    <ApplicationVersion>0.9.4.0</ApplicationVersion>
+    <ApplicationVersion>0.9.5.0</ApplicationVersion>
     <ApplicationRevision>0</ApplicationRevision>
     <BootstrapperEnabled>true</BootstrapperEnabled>
   </PropertyGroup>
@@ -119,6 +119,7 @@
     <Compile Include="Infrastructure\AnnotatedPdfExporter.cs" />
     <Compile Include="UI\ProjectActions.cs" />
     <Compile Include="UI\FolderOrganizer.cs" />
+    <Compile Include="UI\OcrSelectionDialog.cs" />
     <Compile Include="UI\AnnotationActions.cs" />
     <Compile Include="UI\DocumentOverlay.cs" />
     <Compile Include="Infrastructure\WordDocumentImporter.cs" />

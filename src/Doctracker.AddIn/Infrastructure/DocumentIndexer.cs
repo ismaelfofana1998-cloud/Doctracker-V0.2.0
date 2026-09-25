@@ -29,6 +29,8 @@ namespace Doctracker.AddIn.Infrastructure
             var cachedPages=!document.IndexComplete && !forceOcr ? oldPages.Where(p=>!string.IsNullOrWhiteSpace(p.Text)).GroupBy(p=>p.PageNumber).ToDictionary(g=>g.Key,g=>g.First()) : new Dictionary<int,PageTextRecord>();
             var requiresOcr=false;
             var pages = new List<PageTextRecord>();
+            var pendingOcr = new List<int>();
+            var isolated=ocr as IsolatedOcrEngine;
             if (string.Equals(Path.GetExtension(path), ".pdf", StringComparison.OrdinalIgnoreCase))
             {
                 NativePdfiumLoader.EnsureLoaded();
@@ -37,11 +39,12 @@ namespace Doctracker.AddIn.Infrastructure
                     for (var index = 0; index < pdf.PageCount; index++)
                     {
                         cancellation.ThrowIfCancellationRequested();
-                        if(cachedPages.TryGetValue(index+1,out var cached)){pages.Add(cached);progress?.Invoke(index+1,pdf.PageCount);continue;}
+                        if(cachedPages.TryGetValue(index+1,out var cached)){pages.Add(cached);progress?.Invoke(index+1-pendingOcr.Count,pdf.PageCount);continue;}
                         var native = pdf.GetPdfText(index);
                         PageTextRecord page;
                         if (!forceOcr && !string.IsNullOrWhiteSpace(native)) page = ReadNativePage(pdf, index, native);
                         else if(!allowOcr) { page=new PageTextRecord();requiresOcr=true; }
+                        else if(isolated!=null) { page=new PageTextRecord();pendingOcr.Add(index+1); }
                         else
                         {
                             progress?.Invoke(index,pdf.PageCount);
@@ -51,7 +54,7 @@ namespace Doctracker.AddIn.Infrastructure
                         }
                         page.PageNumber = index + 1;
                         pages.Add(page);
-                        progress?.Invoke(index + 1, pdf.PageCount);
+                        progress?.Invoke(index + 1 - pendingOcr.Count, pdf.PageCount);
                     }
                 }
             }
@@ -63,7 +66,9 @@ namespace Doctracker.AddIn.Infrastructure
                     for (var index = 0; index < count; index++)
                     {
                         cancellation.ThrowIfCancellationRequested();
+                        if(cachedPages.TryGetValue(index+1,out var cached)){pages.Add(cached);continue;}
                         if(!allowOcr){pages.Add(new PageTextRecord {PageNumber=index+1});requiresOcr=true;continue;}
+                        if(isolated!=null){pages.Add(new PageTextRecord {PageNumber=index+1});pendingOcr.Add(index+1);continue;}
                         progress?.Invoke(index,count);
                         if (count > 1) original.SelectActiveFrame(FrameDimension.Page, index);
                         using (var bitmap = new Bitmap(original))
@@ -75,6 +80,17 @@ namespace Doctracker.AddIn.Infrastructure
                         progress?.Invoke(index + 1, count);
                     }
                 }
+            }
+            // Bound each lot's text memory and keep rasterization outside Excel.
+            // No PNG roundtrip, no native engine reload between pages of the same lot.
+            for(var offset=0;offset<pendingOcr.Count;offset+=16)
+            {
+                cancellation.ThrowIfCancellationRequested();
+                var batch=pendingOcr.Skip(offset).Take(16).ToList();
+                progress?.Invoke(pages.Count-pendingOcr.Count+offset,pages.Count);
+                var completed=pages.Count-pendingOcr.Count+offset;
+                var recognized=isolated.RecognizePages(path,batch,number=>progress?.Invoke(completed+batch.IndexOf(number)+1,pages.Count),cancellation);
+                foreach(var page in recognized)pages[page.PageNumber-1]=page;
             }
             cancellation.ThrowIfCancellationRequested();
             var oldCount = document.PageCount;

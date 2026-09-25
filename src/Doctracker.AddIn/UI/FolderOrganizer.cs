@@ -21,6 +21,7 @@ namespace Doctracker.AddIn.UI
         private readonly TreeView tree=new TreeView {Dock=DockStyle.Fill,HideSelection=false,AllowDrop=true,BorderStyle=BorderStyle.None};
         private readonly ListView files=new ListView {Dock=DockStyle.Fill,View=View.Details,FullRowSelect=true,MultiSelect=true,HideSelection=false,BorderStyle=BorderStyle.None};
         private readonly Label info=new Label {Dock=DockStyle.Bottom,AutoSize=true,Padding=new Padding(10),Text="Sélectionnez les documents (Ctrl / Maj), puis glissez-les sur un dossier à gauche."};
+        public string[] OcrDocumentIds {get;private set;}
         public string SelectedDocumentId {get;private set;}
         public string SelectedFolderPath=>SelectedPath;
         public FolderOrganizer(ProjectStore store,ProjectState state)
@@ -44,6 +45,10 @@ namespace Doctracker.AddIn.UI
                 var menu=new ContextMenuStrip();menu.Items.Add("Non classés",null,(a,b)=>Move(ids,""));
                 foreach(var path in ProjectFolders.Paths(state)){var target=path;menu.Items.Add(target,null,(a,b)=>Move(ids,target));}
                 menu.Closed+=(a,b)=>menu.Dispose();menu.Show(move,new Point(0,move.Height));};
+            var recognize=SnipTheme.Button("OCR de la sélection","OcrDocuments");recognize.Click+=(s,e)=>{
+                var ids=SelectedIds();if(ids.Length==0){info.Text="Sélectionnez les documents à reconnaître (Ctrl / Maj).";return;}
+                OcrDocumentIds=ids;DialogResult=DialogResult.OK;Close();};
+            toolbar.Controls.Add(recognize);
             toolbar.Controls.Add(create);toolbar.Controls.Add(rename);toolbar.Controls.Add(remove);toolbar.Controls.Add(move);
             var split=new SplitContainer {Size=new Size(850,400),Dock=DockStyle.Fill,FixedPanel=FixedPanel.Panel1,SplitterDistance=230};
             split.Panel1.Controls.Add(tree);split.Panel2.Controls.Add(files);files.Columns.Add("Document",400);files.Columns.Add("Dossier",240);

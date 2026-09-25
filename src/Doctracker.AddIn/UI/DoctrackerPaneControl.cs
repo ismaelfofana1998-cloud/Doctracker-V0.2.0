@@ -103,7 +103,7 @@ namespace Doctracker.AddIn.UI
                 try
                 {
                     EnsureProject(); BeginOperation();
-                    var errors = await IndexMissingAsync(VisibleDocuments().ToList(), true, true).OnUi(this);
+                    var errors = await IndexMissingAsync(VisibleDocuments().ToList(), true, false).OnUi(this);
                     BindDocuments();
                     SetStatus(errors.Count == 0 ? "Index mis à jour." : errors.Count + " pièce(s) à vérifier.");
                     if (errors.Count > 0) MessageBox.Show(this, string.Join("\n", errors), "Indexation");
@@ -445,10 +445,39 @@ namespace Doctracker.AddIn.UI
                 for (var row = 1; row <= rowCount; row++)
                     queries.Add(Enumerable.Range(1, columnCount).Select(column => ExcelCellGateway.QueryText((ExcelInterop.Range)input.Cells[row, column])).ToArray());
                 BeginOperation();
-                var errors = await PrepareSearchTextAsync(VisibleDocuments().ToList()).OnUi(this);
-                if (errors.Count > 0) throw new InvalidOperationException("Matching interrompu : certaines pièces ne sont pas indexées.\n" + string.Join("\n", errors));
-                var scope=SearchScope();scope.Documents=scope.Documents.Where(d=>d.IndexComplete).ToList();
-                var results = await Task.Run(() => context.Matcher.FindBatch(scope,queries.Select(q=>(IReadOnlyList<string>)q).ToList(),true,operation.Token)).OnUi(this);
+                var documentsToMatch=VisibleDocuments().ToList();
+                var criteria=queries.Select(q=>(IReadOnlyList<string>)q).ToList();
+                var ready=await Task.Run(()=>documentsToMatch.Where(d=>context.Store.ValidateIndex(d)).ToList()).OnUi(this);
+                SetStatus("Matching dans "+ready.Count+" document(s) déjà prêt(s)…");
+                var scope=new ProjectState {Documents=ready};
+                var results=await Task.Run(()=>context.Matcher.FindBatch(scope,criteria,true,operation.Token)).OnUi(this);
+                operation.Token.ThrowIfCancellationRequested();
+                var remaining=documentsToMatch.Except(ready).ToList();
+                if(remaining.Count>0)
+                {
+                    var found=results.Count(row=>row.Count==1);
+                    var answer=MessageBox.Show(this,found+" ligne(s) rapprochée(s) dans "+ready.Count+" document(s).\n"+
+                        remaining.Count+" autre(s) document(s) ne sont pas prêts. Choisir ceux à reconnaître ?\nNon : conserver les résultats actuels. Annuler : ne rien insérer.",
+                        "Compléter le matching",MessageBoxButtons.YesNoCancel,MessageBoxIcon.Question);
+                    if(answer==DialogResult.Cancel)throw new OperationCanceledException();
+                    if(answer==DialogResult.Yes)
+                    {
+                        using(var picker=new OcrSelectionDialog(new ProjectState {Documents=remaining},null,remaining.Select(d=>d.Id)))
+                        {
+                            if(picker.ShowDialog(this)!=DialogResult.OK)throw new OperationCanceledException();
+                            var errors=await IndexMissingAsync(picker.SelectedDocuments,true,false,true).OnUi(this);
+                            operation.Token.ThrowIfCancellationRequested();
+                            if(errors.Count>0)MessageBox.Show(this,"Les documents en erreur seront exclus :\n"+string.Join("\n",errors),"Reconnaissance incomplète");
+                        }
+                        // Re-evaluate all prepared documents: a newly recognized page can
+                        // reveal a second candidate for a previously unique match.
+                        ready=await Task.Run(()=>documentsToMatch.Where(d=>context.Store.ValidateIndex(d)).ToList()).OnUi(this);
+                        scope=new ProjectState {Documents=ready};
+                        SetStatus("Matching dans "+ready.Count+" document(s)…");
+                        results=await Task.Run(()=>context.Matcher.FindBatch(scope,criteria,true,operation.Token)).OnUi(this);
+                    }
+                }
+                var excludedCount=documentsToMatch.Count-ready.Count;
                 operation.Token.ThrowIfCancellationRequested();
                 EnsureActiveWorkbook();
                 var writes = new List<PendingWrite>();
@@ -483,7 +512,7 @@ namespace Doctracker.AddIn.UI
                 if (occupied && MessageBox.Show(this, "La destination contient des données. Remplacer les résultats et vider les lignes sans correspondance ?", "Matching", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
                 if(results.Any(row=>row.Count==1 && row[0].IsPartial) && MessageBox.Show(this,"Des références partielles ont été trouvées. Insérer les valeurs réellement lues et leurs preuves pour revue ?","Références partielles",MessageBoxButtons.YesNo)!=DialogResult.Yes)return;
                 CommitWrites(writes, false, unresolved);
-                SetStatus(writes.Count + " preuve(s) créée(s) ; " + missing + " ligne(s) sans résultat ; " + ambiguous + " ambiguë(s). Revue requise.");
+                SetStatus(writes.Count + " preuve(s) créée(s) ; " + missing + " ligne(s) sans résultat ; " + ambiguous + " ambiguë(s). Revue requise."+(excludedCount>0?" Recherche limitée : "+excludedCount+" document(s) non préparé(s).":""));
                 if (missing + ambiguous > 0) MessageBox.Show(this,
                     "Lignes sans correspondance : " + string.Join(", ", Enumerable.Range(0, rowCount).Where(i => results[i].Count == 0 && queries[i].Any(q => !string.IsNullOrWhiteSpace(q))).Select(i => input.Row + i)) +
                     "\nLignes ambiguës : " + string.Join(", ", Enumerable.Range(0, rowCount).Where(i => results[i].Count > 1).Select(i => input.Row + i)), "Résultats à compléter");
@@ -508,6 +537,9 @@ namespace Doctracker.AddIn.UI
                         context.State.Documents.FirstOrDefault(doc => doc.Id == snip.DocumentId)?.OriginalName +
                         " · p. " + snip.PageNumber + " · " + snip.WorksheetName + "!" + snip.CellAddress }).ToList();
                 if (items.Count == 0) { ClearCellProof(); return false; }
+                var last=context.State.Snips.First(snip=>snip.Id==items[items.Count-1].Id);
+                if(focusedSnipId==last.Id && SelectedDocument?.Id==last.DocumentId && !string.IsNullOrEmpty(canvas.CurrentPath) && canvas.CurrentPageNumber==last.PageNumber && view.Proofs.Items.Count==items.Count &&
+                    view.Proofs.Items.Cast<ProofItem>().Select(item=>item.Id).SequenceEqual(items.Select(item=>item.Id))) return true;
                 bindingProofs = true;
                 try { view.Proofs.DataSource = items; view.Proofs.SelectedIndex = items.Count - 1; view.ShowProofs(true); }
                 finally { bindingProofs = false; }
@@ -802,8 +834,17 @@ namespace Doctracker.AddIn.UI
         {
             var indexer = new DocumentIndexer(context.Store, ocr);
             var token = operation.Token;
-            return Task.Run(() => indexer.IndexMissing(context.State,
-                (name, page, count) => SetStatusThreadSafe((allowOcr ? "Reconnaissance : " : "Lecture du texte : ") + name + " — " + page + "/" + count), token, scope, retryFailed, forceReindex, allowOcr));
+            var selected=(scope??context.State.Documents).ToList();
+            SetStatus("Préparation · "+selected.Count+" document(s) sélectionné(s)…");
+            return Task.Run(() => {
+                var timer=System.Diagnostics.Stopwatch.StartNew();
+                var pending=forceReindex?selected:selected.Where(d=>!context.Store.ValidateIndex(d)).ToList();
+                DiagnosticLog.Write("RecognitionBatchStart documents="+selected.Count+" allowOcr="+allowOcr);
+                try {return indexer.IndexMissing(context.State,
+                    (name,page,count)=>SetStatusThreadSafe((allowOcr?"Reconnaissance":"Lecture du texte")+" · "+name+" · pages "+page+"/"+count+" · sélection : "+selected.Count+" document(s)"),
+                    token,pending,retryFailed,forceReindex,allowOcr);}
+                finally {DiagnosticLog.Write("RecognitionBatchEnd elapsedMs="+timer.ElapsedMilliseconds);}
+            });
         }
 
         private PendingWrite PrepareWrite(ExcelInterop.Range target, DocumentRecord document, int page, RectangleF zone, SnipType type, string text)

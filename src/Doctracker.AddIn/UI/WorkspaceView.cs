@@ -100,7 +100,7 @@ namespace Doctracker.AddIn.UI
 
         }
         public void SetDocumentSummary(int total, int indexed) => tips.SetToolTip(Documents,
-            "Document actif · " + total + " pièce(s), " + indexed + " indexée(s). Texte préparé à la première recherche.");
+            "Document actif · " + total + " pièce(s), " + indexed + " prête(s) pour la recherche. Bouton OCR pour choisir les documents à reconnaître.");
         public void ShowResults(int count) { resultTotal=count;resultCount.Text=count==0 ? "Aucun résultat · Vérifiez le dossier et le texte recherché." : count+" résultat(s)";SizeResults();resultsPanel.Visible=true; }
         private void SizeResults() { Results.Visible=resultTotal>0;resultsPanel.RowStyles[1].Height=resultTotal==0 ? 0 : Math.Min(3,resultTotal)*Results.ItemHeight+8; resultCount.MaximumSize=new Size(Math.Max(100,Width-120),0); }
         public void HideResults() { resultsPanel.Visible=false; }

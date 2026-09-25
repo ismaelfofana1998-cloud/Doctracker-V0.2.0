@@ -1,5 +1,7 @@
 using System;
 using System.Drawing;
+using System.Collections.Generic;
+using System.Linq;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Text;
@@ -12,6 +14,7 @@ namespace Doctracker.AddIn.Infrastructure
 {
     public sealed class OcrWorkRequest
     {
+        public List<int> Pages {get;set;}=new List<int>();
         public string Source {get;set;}
         public int PageNumber {get;set;}=1;
         public float X {get;set;}
@@ -19,6 +22,10 @@ namespace Doctracker.AddIn.Infrastructure
         public float Width {get;set;}=1;
         public float Height {get;set;}=1;
         public bool Table {get;set;}
+    }
+    public sealed class OcrBatchResult
+    {
+        public List<PageTextRecord> Pages {get;set;}=new List<PageTextRecord>();
     }
     internal static class OcrWorkerEntry
     {
@@ -30,6 +37,7 @@ namespace Doctracker.AddIn.Infrastructure
                 using(var reader=XmlReader.Create(requestPath,ReaderSettings()))request=(OcrWorkRequest)new XmlSerializer(typeof(OcrWorkRequest)).Deserialize(reader);
                 if(request==null || request.PageNumber<1 || !Valid(request.X) || !Valid(request.Y) || !Valid(request.Width) || !Valid(request.Height) ||
                     request.Width<=0 || request.Height<=0 || request.X+request.Width>1.00001 || request.Y+request.Height>1.00001)throw new InvalidDataException();
+                if(request.Pages.Count>0)return RunBatch(request,responsePath);
                 Console.Out.WriteLine("WorkerCropStart");
                 using(var crop=ReadCrop(request))
                 using(var engine=new TesseractOcrEngine())
@@ -47,7 +55,48 @@ namespace Doctracker.AddIn.Infrastructure
             }
             catch {Console.Out.WriteLine("WorkerFailure");return 70;}
         }
-        internal static XmlReaderSettings ReaderSettings()=>new XmlReaderSettings {DtdProcessing=DtdProcessing.Prohibit,XmlResolver=null,MaxCharactersInDocument=16*1024*1024};
+        private static int RunBatch(OcrWorkRequest request,string responsePath)
+        {
+            if(request.Pages.Count>16 || request.Pages.Any(n=>n<1) || request.Pages.Distinct().Count()!=request.Pages.Count)throw new InvalidDataException();
+            var result=new OcrBatchResult();
+            using(var engine=new TesseractOcrEngine())
+            {
+                if(Path.GetExtension(request.Source).Equals(".pdf",StringComparison.OrdinalIgnoreCase))
+                {
+                    NativePdfiumLoader.EnsureLoaded();
+                    using(var pdf=PdfDocument.Load(request.Source))
+                    {
+                        foreach(var number in request.Pages)
+                        {
+                            if(number>pdf.PageCount)throw new InvalidDataException();
+                            var size=DocumentIndexer.RenderSize(pdf.PageSizes[number-1]);
+                            using(var rendered=pdf.Render(number-1,size.Width,size.Height,144,144,PdfRenderFlags.Annotations))
+                            using(var bitmap=new Bitmap(rendered))AddPage(result,engine,bitmap,number);
+                        }
+                    }
+                }
+                else using(var source=Image.FromFile(request.Source))
+                {
+                    var count=DocumentIndexer.ImagePageCount(source);
+                    foreach(var number in request.Pages)
+                    {
+                        if(number>count)throw new InvalidDataException();
+                        if(count>1)source.SelectActiveFrame(FrameDimension.Page,number-1);
+                        using(var bitmap=Crop(source,new OcrWorkRequest()))AddPage(result,engine,bitmap,number);
+                    }
+                }
+            }
+            using(var writer=XmlWriter.Create(responsePath,new XmlWriterSettings {Encoding=new UTF8Encoding(false)}))
+                new XmlSerializer(typeof(OcrBatchResult)).Serialize(writer,result);
+            Console.Out.WriteLine("WorkerResultReady");return 0;
+        }
+        private static void AddPage(OcrBatchResult result,TesseractOcrEngine engine,Bitmap bitmap,int number)
+        {
+            var page=engine.Recognize(bitmap);page.PageNumber=number;
+            page.Text=Clean(page.Text);foreach(var word in page.Words)word.Text=Clean(word.Text);
+            result.Pages.Add(page);Console.Out.WriteLine("WorkerPageReady "+number);
+        }
+        internal static XmlReaderSettings ReaderSettings()=>new XmlReaderSettings {DtdProcessing=DtdProcessing.Prohibit,XmlResolver=null,MaxCharactersInDocument=64*1024*1024};
         private static bool Valid(float value)=>!float.IsNaN(value) && !float.IsInfinity(value) && value>=0 && value<=1;
         private static Bitmap ReadCrop(OcrWorkRequest request)
         {

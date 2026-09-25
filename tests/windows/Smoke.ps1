@@ -262,6 +262,33 @@ try {
     $afterWork=@(Get-ChildItem $workRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object Name)
     if(@($afterWork | Where-Object {$_ -notin $beforeWork}).Count -ne 0){throw 'OCR temporary files leaked after a worker failure.'}
     Write-Host 'PASS: isolated OCR and crop, invalid source recovery, child exit, timeout, cancellation and temporary cleanup'
+    # The same containment must hold for batch requests, with no partial result accepted.
+    foreach($scenario in @(@{Path=$crashWorker;Timeout=3000;Cancel=$false},@{Path=$hangWorker;Timeout=1200;Cancel=$false},@{Path=$hangWorker;Timeout=5000;Cancel=$true})) {
+        $isolated=$constructor.Invoke([object[]]@([string]$scenario.Path,[int]$scenario.Timeout))
+        $cancel=[Threading.CancellationTokenSource]::new();$rejected=$false
+        if($scenario.Cancel){$cancel.CancelAfter(500)}
+        try {$isolated.RecognizePages($imagePath,[int[]]@(1),$null,$cancel.Token) | Out-Null}
+        catch {$rejected=$true}
+        finally {$isolated.Dispose();$cancel.Dispose()}
+        if(!$rejected){throw 'Batch accepted failed or cancelled worker result.'}
+        $pidFile=Join-Path $temp 'fake-worker.pid'
+        if(Test-Path $pidFile){$childId=[int][IO.File]::ReadAllText($pidFile);if(Get-Process -Id $childId -ErrorAction SilentlyContinue){throw 'Batch left a child alive.'};Remove-Item $pidFile}
+    }
+    $heartbeatWorker=Join-Path $temp 'fake-heartbeat.exe'
+    Add-Type -TypeDefinition @'
+public static class HeartbeatChild {
+    public static void Main(string[] args) {
+        for(int i=1;i<=3;i++){System.Threading.Thread.Sleep(600);System.Console.WriteLine("WorkerPageReady "+i);}
+        System.IO.File.WriteAllText(args[1],"<OcrBatchResult><Pages><PageTextRecord PageNumber='1'>one</PageTextRecord><PageTextRecord PageNumber='2'>two</PageTextRecord><PageTextRecord PageNumber='3'>three</PageTextRecord></Pages></OcrBatchResult>");
+    }
+}
+'@ -OutputAssembly $heartbeatWorker -OutputType ConsoleApplication
+    $isolated=$constructor.Invoke([object[]]@([string]$heartbeatWorker,[int]1400))
+    try {$heartbeatPages=$isolated.RecognizePages($imagePath,[int[]]@(1,2,3),$null,[Threading.CancellationToken]::None);if($heartbeatPages.Count -ne 3){throw 'Heartbeat batch result missing.'}}
+    finally {$isolated.Dispose()}
+    if(@(Get-ChildItem $workRoot -Directory | Where-Object {$_.Name -notin $beforeWork}).Count -ne 0){throw 'Batch leaked temporary work folders.'}
+    Write-Host 'PASS: batch crash, timeout, cancellation, per-page deadline and cleanup'
+
 
 
     # Minimal PDF fixture built with exact byte offsets; no external files or customer data.
@@ -420,6 +447,48 @@ try {
     $pdfRegion=$ocr.RecognizeRegion($multiPath,2,[Drawing.RectangleF]::new(.05,.03,.5,.12),$false,[Threading.CancellationToken]::None)
     if($pdfRegion.Text -notmatch 'PAGE' -or $pdfRegion.PageNumber -ne 2){throw 'PDF source crop/OCR in child failed.'}
     Write-Host 'PASS: PDF rasterization and region OCR outside the host process'
+    # Non-consecutive page selection, same text/locations, reused engine, and measured latency.
+    $watch=[Diagnostics.Stopwatch]::StartNew()
+    $batchPages=$ocr.RecognizePages($multiPath,[int[]]@(3,1,2),$null,[Threading.CancellationToken]::None)
+    $batchMs=$watch.ElapsedMilliseconds
+    if((($batchPages | ForEach-Object PageNumber) -join ',') -ne '3,1,2'){throw 'Batch page identities or order changed.'}
+    $watch.Restart()
+    for($i=0;$i -lt 3;$i++) {
+        $single=$ocr.RecognizeRegion($multiPath,$batchPages[$i].PageNumber,[Drawing.RectangleF]::new(0,0,1,1),$false,[Threading.CancellationToken]::None)
+        if($batchPages[$i].Text -ne $single.Text -or $batchPages[$i].Words.Count -eq 0){throw 'Batch lost OCR text or word boxes.'}
+    }
+    Write-Host ('PASS: selected PDF pages, OCR equivalence; batch_ms='+$batchMs+' separate_ms='+$watch.ElapsedMilliseconds)
+    $scanKey=$scanDoc.IndexKey
+    $scanScope=[Collections.Generic.List[Doctracker.Core.Models.DocumentRecord]]::new();$scanScope.Add($scanDoc)
+    $indexer.IndexMissing($scanState,$null,[Threading.CancellationToken]::None,$scanScope,$true,$false,$true) | Out-Null
+    if($scanDoc.IndexKey -ne $scanKey){throw 'Prepared document was recognized a second time.'}
+    # Verify real checked selection survives changing folder, then clears only visible rows.
+    $selectionState=[Doctracker.Core.Models.ProjectState]::new()
+    foreach($entry in @(@{Name='BL 01.pdf';Folder='BL'},@{Name='BL 02.pdf';Folder='BL / 2026'},@{Name='Facture 03.pdf';Folder='Factures'})) {
+        $doc=[Doctracker.Core.Models.DocumentRecord]::new();$doc.OriginalName=$entry.Name;$doc.Categories.Add($entry.Folder);$selectionState.Documents.Add($doc)
+    }
+    $pickerType=$assembly.GetType('Doctracker.AddIn.UI.OcrSelectionDialog',$true)
+    $picker=$pickerType.GetConstructors($flags)[0].Invoke([object[]]@($selectionState,'BL',$null))
+    try {
+        $picker.Show();[Windows.Forms.Application]::DoEvents()
+        $fileList=$pickerType.GetField('files',$flags).GetValue($picker)
+        if($fileList.Items.Count -ne 2){throw 'OCR picker did not restrict to BL and its subfolders.'}
+        $pickerType.GetMethod('CheckVisible',$flags).Invoke($picker,[object[]]@($true)) | Out-Null
+        $folderList=$pickerType.GetField('folders',$flags).GetValue($picker)
+        $folderList.SelectedIndex=0
+        if($picker.SelectedDocuments.Count -ne 2){throw 'OCR selection lost on folder change.'}
+        $pickerType.GetMethod('CheckVisible',$flags).Invoke($picker,[object[]]@($true)) | Out-Null
+        if($picker.SelectedDocuments.Count -ne 3){throw 'OCR multi-selection failed.'}
+        $folderList.SelectedItem=@($folderList.Items | Where-Object {$_.Path -eq 'BL'})[0]
+        $pickerType.GetMethod('CheckVisible',$flags).Invoke($picker,[object[]]@($false)) | Out-Null
+        if($picker.SelectedDocuments.Count -ne 1 -or $picker.SelectedDocuments[0].OriginalName -ne 'Facture 03.pdf'){throw 'Folder deselection affected other folders.'}
+        $folderList.SelectedIndex=0
+        $bitmap=[Drawing.Bitmap]::new($picker.Width,$picker.Height)
+        try {$picker.DrawToBitmap($bitmap,[Drawing.Rectangle]::new(0,0,$picker.Width,$picker.Height));$bitmap.Save((Join-Path $previewDirectory 'ocr-selection.png'))}
+        finally {$bitmap.Dispose()}
+    } finally {$picker.Close();$picker.Dispose()}
+    Write-Host 'PASS: OCR picker multi-selection, folder scope, preserved checks and prepared-index reuse'
+
     $canvas.LoadDocument($multiPath);$canvas.GoToPage(15)
     if($canvas.CurrentPageNumber -ne 15){throw 'Direct page navigation failed.'}
     $viewport=$type.GetField('viewport',$flags).GetValue($canvas)

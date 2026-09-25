@@ -15,7 +15,17 @@ namespace Doctracker.AddIn.UI
         private readonly ExcelInterop.Application application;
         private readonly Dictionary<int, WindowPane> panes = new Dictionary<int, WindowPane>();
         private readonly Dictionary<ExcelInterop.Workbook, WorkbookProjectContext> contexts = new Dictionary<ExcelInterop.Workbook, WorkbookProjectContext>();
-        public PaneController(ThisAddIn addIn, ExcelInterop.Application application) { this.addIn = addIn; this.application = application; }
+        private readonly Timer selectionTimer = new Timer { Interval = 220 };
+        public PaneController(ThisAddIn addIn, ExcelInterop.Application application)
+        {
+            this.addIn = addIn; this.application = application;
+            selectionTimer.Tick += (sender,args) => {
+                selectionTimer.Stop();
+                // Read the current selection, never keep a stale COM range across callbacks.
+                try { if(application.Ready) NavigateSelection(application.Selection as ExcelInterop.Range); }
+                catch(System.Runtime.InteropServices.COMException) { /* Excel is editing. */ }
+            };
+        }
 
         private WindowPane Current(bool cleanup = true)
         {
@@ -68,16 +78,13 @@ namespace Doctracker.AddIn.UI
         public void SearchSelection() => Show(control => control.SearchSelection());
         public void NavigateFromSelection() => Show(control => control.NavigateFromSelection());
         public void ReviewSelection() => Show(control => control.ReviewSelection());
-        public bool TryNavigateFromCell(ExcelInterop.Range target)
-        {
-            // Normal Excel double-click must never create a project or show an error.
-            if (target == null || target.Cells.CountLarge != 1 ||
-                new Excel.ExcelCellGateway(application).GetSnipIds(target).Count==0) return false;
-            var found = false;
-            Run(entry => { found = entry.Control.TryNavigateFromCell(target); if (found) entry.Pane.Visible = true; });
-            return found;
-        }
+        public void CancelPendingNavigation() => selectionTimer.Stop();
         public void SelectionChanged(ExcelInterop.Range target)
+        {
+            selectionTimer.Stop();
+            selectionTimer.Start();
+        }
+        private void NavigateSelection(ExcelInterop.Range target)
         {
             // Excel fires this for mouse clicks AND keyboard navigation. Never steal focus.
             try
@@ -131,6 +138,7 @@ namespace Doctracker.AddIn.UI
 
         public void Dispose()
         {
+            selectionTimer.Stop(); selectionTimer.Dispose();
             foreach (var entry in panes.Values) entry.Control.Dispose();
             foreach(var context in contexts.Values)context.Dispose();
             panes.Clear(); contexts.Clear();

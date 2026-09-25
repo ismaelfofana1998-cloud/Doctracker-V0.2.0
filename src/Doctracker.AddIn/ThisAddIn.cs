@@ -22,6 +22,7 @@ namespace Doctracker.AddIn
             Application.SheetChange += Application_SheetChange;
             Application.SheetSelectionChange += Application_SheetSelectionChange;
             Application.SheetBeforeDoubleClick += Application_SheetBeforeDoubleClick;
+
         }
 
         private void ThisAddIn_Shutdown(object sender, EventArgs e)
@@ -35,6 +36,7 @@ namespace Doctracker.AddIn
             Application.SheetChange -= Application_SheetChange;
             Application.SheetSelectionChange -= Application_SheetSelectionChange;
             Application.SheetBeforeDoubleClick -= Application_SheetBeforeDoubleClick;
+
             if (Controller != null) Controller.Dispose();
         }
 
@@ -49,15 +51,10 @@ namespace Doctracker.AddIn
             Controller?.SelectionChanged(target);
         }
 
-        private void Application_SheetBeforeDoubleClick(
-            object sheet,
-            ExcelInterop.Range target,
-            ref bool cancel)
+        private void Application_SheetBeforeDoubleClick(object sheet, ExcelInterop.Range target, ref bool cancel)
         {
-            if (Controller != null && Controller.TryNavigateFromCell(target))
-            {
-                cancel = true;
-            }
+            // Preserve Excel's default edit behavior; only cancel queued proof navigation.
+            Controller?.CancelPendingNavigation();
         }
 
         private void Application_WindowActivate(ExcelInterop.Workbook workbook, ExcelInterop.Window window)

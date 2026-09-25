@@ -26,6 +26,7 @@ namespace Doctracker.AddIn.UI
                     case "Comment": ToggleComment();break;
                     case "TestReference": ChangeTestReference();break;
                     case "ReindexOcr": ReindexOcrAsync();break;
+                    case "OcrDocuments": RecognizeDocumentsAsync();break;
                     case "DeleteSnip": DeleteSnipFromSelection();break;
                     case "DeleteSelectionSnips": DeleteSelectionSnips();break;
                     case "ImportFolder": ImportFolderAsync();break;
@@ -43,6 +44,29 @@ namespace Doctracker.AddIn.UI
                 }
             }
             catch(Exception exception){ShowError(exception);}
+        }
+        private async void RecognizeDocumentsAsync(string[] ids=null)
+        {
+            if(context.IsBusy)return;
+            try
+            {
+                EnsureProject();
+                List<DocumentRecord> selected=ids==null?null:RecognitionScope.Select(context.State,null,ids);
+                if(selected==null)using(var dialog=new OcrSelectionDialog(context.State,(view.Categories.SelectedItem as FolderChoice)?.Path))
+                {
+                    if(dialog.ShowDialog(this)!=DialogResult.OK)return;
+                    selected=dialog.SelectedDocuments;
+                }
+                if(selected.Count==0)return;
+                BeginOperation();
+                var errors=await IndexMissingAsync(selected,true,false,true).OnUi(this);
+                BindDocuments();
+                SetStatus("Reconnaissance terminée : "+selected.Count(d=>d.IndexComplete && string.IsNullOrEmpty(d.IndexError))+" / "+selected.Count+" document(s) prêt(s). Enregistrez le classeur.");
+                if(errors.Count>0)MessageBox.Show(this,string.Join("\n",errors),"Documents à réessayer");
+            }
+            catch(OperationCanceledException){SetStatus("OCR annulé. Les documents terminés sont conservés ; le document interrompu garde son ancien index.");}
+            catch(Exception exception){ShowError(exception);}
+            finally{EndOperation();}
         }
         private async void ReindexOcrAsync()
         {
@@ -87,7 +111,7 @@ namespace Doctracker.AddIn.UI
         private IEnumerable<DocumentRecord> VisibleDocuments()
         {
             var folder=(view.Categories.SelectedItem as FolderChoice)?.Path;
-            return folder==null ? context.State.Documents : context.State.Documents.Where(d=>folder==""?d.Categories.Count==0:d.Categories.Any(c=>ProjectFolders.Within(c,folder)));
+            return RecognitionScope.Select(context.State,folder);
         }
         private ProjectState SearchScope() => new ProjectState {Documents=VisibleDocuments().ToList()};
         private void ChangeCategory()
@@ -95,15 +119,17 @@ namespace Doctracker.AddIn.UI
             if(context.IsBusy)return;
             try
             {
+                string[] ocrIds=null;
                 EnsureProject();using(var dialog=new FolderOrganizer(context.Store,context.State))
                 {
-                    dialog.ShowDialog(this);RefreshCategories();
+                    dialog.ShowDialog(this);ocrIds=dialog.OcrDocumentIds;RefreshCategories();
                     bindingCategories=true;
                     try{view.Categories.SelectedItem=view.Categories.Items.Cast<FolderChoice>().FirstOrDefault(choice=>choice.Path==dialog.SelectedFolderPath)??view.Categories.Items[0];}
                     finally{bindingCategories=false;}
                     BindDocuments();if(dialog.SelectedDocumentId!=null)SelectDocument(dialog.SelectedDocumentId);
                 }
                 context.MarkWorkbookDirty();SetStatus("Dossiers enregistrés. Utilisez la liste des dossiers pour limiter la recherche et l'export.");
+                if(ocrIds!=null)RecognizeDocumentsAsync(ocrIds);
             }
             catch(Exception exception){ShowError(exception);}
         }

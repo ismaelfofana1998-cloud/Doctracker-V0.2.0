@@ -19,7 +19,7 @@ internal static class OcrWorkerBootstrap
         var parent=OpenProcess(0x00100000,false,parentId);
         try
         {
-            using(var deadline=new Timer(_=>Environment.Exit(124),null,120000,Timeout.Infinite))
+            // The host bounds each page by an inactivity deadline and kills on cancellation.
             using(var watch=new Timer(_=>{if(parent!=IntPtr.Zero && WaitForSingleObject(parent,0)==0)Environment.Exit(125);},null,2000,2000))
             {
                 var assembly=Assembly.LoadFrom(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"Doctracker.AddIn.dll"));
