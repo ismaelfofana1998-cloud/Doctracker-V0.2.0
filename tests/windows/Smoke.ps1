@@ -213,13 +213,50 @@ try {
     Write-Host 'PASS: responsive workspace at 420/760 px, enlarged text, controls without vertical clipping, UI previews'
 
 
-    $ocrType = $assembly.GetType('Doctracker.AddIn.Infrastructure.TesseractOcrEngine', $true)
+    $ocrType = $assembly.GetType('Doctracker.AddIn.Infrastructure.IsolatedOcrEngine', $true)
     $ocr = [Activator]::CreateInstance($ocrType, $true)
     $bitmap = [Drawing.Bitmap]::new($imagePath)
     $page = $ocr.Recognize($bitmap, $false)
     $bitmap.Dispose()
     if ($page.Text -notmatch '12345' -or $page.Words.Count -lt 2) { throw ('OCR text/word boxes missing: ' + $page.Text) }
     Write-Host 'PASS: deployed native OCR, French/English models, recognized text and word boxes'
+    $ocrZone=[Drawing.RectangleF]::new(0,.1,.65,.55)
+    $regionPage=$ocr.RecognizeRegion($imagePath,1,$ocrZone,$false,[Threading.CancellationToken]::None)
+    if($regionPage.Text -notmatch '12345'){throw 'Isolated source-region OCR did not preserve crop coordinates.'}
+    $badSource=Join-Path $temp 'broken.pdf';[IO.File]::WriteAllText($badSource,'invalid synthetic PDF')
+    $failed=$false
+    try {$ocr.RecognizeRegion($badSource,1,$ocrZone,$false,[Threading.CancellationToken]::None) | Out-Null}
+    catch {$failed=$true}
+    if(!$failed){throw 'Invalid PDF worker result was accepted.'}
+    $page=$ocr.RecognizeRegion($imagePath,1,$ocrZone,$false,[Threading.CancellationToken]::None)
+    if($page.Text -notmatch '12345'){throw 'OCR did not recover after a failed child.'}
+
+    # Unexpected child exit and a hung child must not terminate the host.
+    $crashWorker=Join-Path $temp 'fake-crash.exe'
+    Add-Type -TypeDefinition 'public static class CrashChild {public static int Main(string[] args){System.Environment.Exit(139);return 139;}}' -OutputAssembly $crashWorker -OutputType ConsoleApplication
+    $hangWorker=Join-Path $temp 'fake-hang.exe'
+    Add-Type -TypeDefinition 'public static class HungChild {public static void Main(string[] args){System.IO.File.WriteAllText(System.IO.Path.Combine(System.AppDomain.CurrentDomain.BaseDirectory,"fake-worker.pid"),System.Diagnostics.Process.GetCurrentProcess().Id.ToString());System.Threading.Thread.Sleep(30000);}}' -OutputAssembly $hangWorker -OutputType ConsoleApplication
+    $constructor=$ocrType.GetConstructor($flags,$null,[Type[]]@([string],[int]),$null)
+    $workRoot=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Doctracker/OcrWork'
+    $beforeWork=@(Get-ChildItem $workRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object Name)
+    foreach($scenario in @(@{Path=$crashWorker;Timeout=3000;Cancel=$false},@{Path=$hangWorker;Timeout=1200;Cancel=$false},@{Path=$hangWorker;Timeout=5000;Cancel=$true})) {
+        $isolated=$constructor.Invoke([object[]]@($scenario.Path,[int]$scenario.Timeout))
+        $cancel=[Threading.CancellationTokenSource]::new();$rejected=$false
+        if($scenario.Cancel){$cancel.CancelAfter(500)}
+        $elapsed=[Diagnostics.Stopwatch]::StartNew()
+        try {$isolated.RecognizeRegion($imagePath,1,$ocrZone,$false,$cancel.Token) | Out-Null}
+        catch {$rejected=$true}
+        finally {$isolated.Dispose();$cancel.Dispose()}
+        if(!$rejected -or $elapsed.Elapsed.TotalSeconds -gt 10){throw 'Child failure/timeout/cancellation was not contained promptly.'}
+        if($scenario.Path -eq $hangWorker) {
+            $pidFile=Join-Path $temp 'fake-worker.pid'
+            if(Test-Path $pidFile){$childId=[int][IO.File]::ReadAllText($pidFile);if(Get-Process -Id $childId -ErrorAction SilentlyContinue){throw 'Cancelled/hung OCR child survived.'};Remove-Item $pidFile}
+        }
+    }
+    $afterWork=@(Get-ChildItem $workRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object Name)
+    if(@($afterWork | Where-Object {$_ -notin $beforeWork}).Count -ne 0){throw 'OCR temporary files leaked after a worker failure.'}
+    Write-Host 'PASS: isolated OCR and crop, invalid source recovery, child exit, timeout, cancellation and temporary cleanup'
+
 
     # Minimal PDF fixture built with exact byte offsets; no external files or customer data.
     $objects = @(
@@ -359,6 +396,9 @@ try {
     foreach($offset in $multiOffsets){$multiText+=('{0:D10} 00000 n ' -f $offset)+"`n"}
     $multiText+="trailer`n<< /Size $($multiObjects.Count+1) /Root 1 0 R >>`nstartxref`n$multiXref`n%%EOF"
     $multiPath=Join-Path $temp 'continuous.pdf';[IO.File]::WriteAllText($multiPath,$multiText,[Text.Encoding]::ASCII)
+    $pdfRegion=$ocr.RecognizeRegion($multiPath,2,[Drawing.RectangleF]::new(.05,.03,.5,.12),$false,[Threading.CancellationToken]::None)
+    if($pdfRegion.Text -notmatch 'PAGE' -or $pdfRegion.PageNumber -ne 2){throw 'PDF source crop/OCR in child failed.'}
+    Write-Host 'PASS: PDF rasterization and region OCR outside the host process'
     $canvas.LoadDocument($multiPath);$canvas.GoToPage(15)
     if($canvas.CurrentPageNumber -ne 15){throw 'Direct page navigation failed.'}
     $viewport=$type.GetField('viewport',$flags).GetValue($canvas)

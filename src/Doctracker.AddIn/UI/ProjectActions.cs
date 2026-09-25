@@ -26,7 +26,7 @@ namespace Doctracker.AddIn.UI
                     case "Comment": ToggleComment();break;
                     case "TestReference": ChangeTestReference();break;
                     case "ReindexOcr": ReindexOcrAsync();break;
-                    case "DeleteSnip": DeleteSnip(focusedSnipId);break;
+                    case "DeleteSnip": DeleteSnipFromSelection();break;
                     case "DeleteSelectionSnips": DeleteSelectionSnips();break;
                     case "ImportFolder": ImportFolderAsync();break;
                     case "Categorize": ChangeCategory();break;

@@ -20,7 +20,7 @@ namespace Doctracker.AddIn.UI
         private readonly ExcelInterop.Application application;
         private readonly WorkbookProjectContext context;
         private readonly ExcelCellGateway cells;
-        private readonly IOcrEngine ocr;
+        private readonly IsolatedOcrEngine ocr;
         private readonly WorkspaceView view;
         private bool bindingProofs;
         private string focusedSnipId;
@@ -49,7 +49,7 @@ namespace Doctracker.AddIn.UI
             this.workbook = workbook;
             context = projectContext;
             cells = new ExcelCellGateway(application);
-            ocr = new TesseractOcrEngine();
+            ocr = new IsolatedOcrEngine();
 
             SetStyle(ControlStyles.AllPaintingInWmPaint |
                      ControlStyles.UserPaint |
@@ -262,7 +262,8 @@ namespace Doctracker.AddIn.UI
                     {
                         SetStatus("Reconnaissance du texte dans la zone sélectionnée…");
                         DiagnosticLog.Write("SnipOcr");
-                        using (var crop = canvas.CropPageRegion(pageNumber,rectangle)) recognized = await Task.Run(() => ocr.Recognize(crop, type == SnipType.Table));
+                        var sourcePath=canvas.CurrentPath;var token=operation.Token;
+                        recognized = await Task.Run(() => ocr.RecognizeRegion(sourcePath,pageNumber,rectangle,type==SnipType.Table,token));
                     }
                 }
                 operation.Token.ThrowIfCancellationRequested();
@@ -757,6 +758,7 @@ namespace Doctracker.AddIn.UI
             if (context.IsBusy) throw new InvalidOperationException("Une opération est déjà en cours dans ce classeur.");
             context.IsBusy = true;
             operation = new CancellationTokenSource();
+            ocr.Cancellation=operation.Token;
             SetBusy(true);
         }
 

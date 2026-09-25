@@ -1,5 +1,11 @@
 # 0.3.0 — fiabilisation des parcours Excel
 
+## 0.9.3
+- Préparation de la zone et OCR des snips dans un processus externe, annulable et limité en durée.
+- Erreur contrôlée si le moteur s’arrête ; aucun résultat partiel envoyé aux cellules.
+- Journaux distinguant rasterisation, reconnaissance et sortie du processus ; temporaires supprimés après requête.
+- Bouton de suppression adapté aux plages ; tests d’arrêt du moteur, timeout, annulation et livraison ClickOnce des exécutables x86/x64.
+
 ## 0.9.2
 - Aperçus PDF/images proportionnés à leur taille affichée pour limiter la mémoire à faible zoom.
 - Découpe OCR depuis la source et depuis la page capturée, indépendamment du zoom et du défilement.

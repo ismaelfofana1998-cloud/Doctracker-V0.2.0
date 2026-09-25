@@ -16,7 +16,7 @@ namespace Doctracker.AddIn.UI
     {
         private void WireAnnotationActions()
         {
-            view.DeleteSnip.Click += (s,e) => DeleteSnip(focusedSnipId);
+            view.DeleteSnip.Click += (s,e) => DeleteSnipFromSelection();
             canvas.DeleteProofRequested += DeleteSnip;
             canvas.EditCommentRequested += EditDocumentComment;
             canvas.CommentGeometryChanged += ResizeDocumentComment;
@@ -213,7 +213,8 @@ namespace Doctracker.AddIn.UI
                     if(recognized==null)
                     {
                         SetStatus("Reconnaissance de la nouvelle zone…");
-                        using(var crop=canvas.CropPageRegion(snip.PageNumber,zone))recognized=await System.Threading.Tasks.Task.Run(()=>ocr.Recognize(crop));
+                        var sourcePath=canvas.CurrentPath;var token=operation.Token;var sourcePage=snip.PageNumber;
+                        recognized=await System.Threading.Tasks.Task.Run(()=>ocr.RecognizeRegion(sourcePath,sourcePage,zone,false,token));
                     }
                     raw=snip.Type==SnipType.Sum?SumSourceText(recognized):recognized.Text;
                 }
@@ -305,6 +306,16 @@ namespace Doctracker.AddIn.UI
                 ShowError(failures.Count==0?exception:new InvalidOperationException(exception.Message+"\nRestauration de cellules incomplète : "+string.Join(" ; ",failures)));
             }
             finally {application.EnableEvents=events;}
+        }
+
+        private void DeleteSnipFromSelection()
+        {
+            try
+            {
+                var selected=application.Selection as ExcelInterop.Range;
+                if(selected!=null && selected.Cells.CountLarge>1)DeleteSelectionSnips();else DeleteSnip(focusedSnipId);
+            }
+            catch(Exception failure){ShowError(failure);}
         }
 
         private void DeleteSnip(string id)

@@ -32,7 +32,7 @@
     <UpdateEnabled>false</UpdateEnabled>
     <TargetCulture>fr-FR</TargetCulture>
     <FallbackCulture>en-US</FallbackCulture>
-    <ApplicationVersion>0.9.2.0</ApplicationVersion>
+    <ApplicationVersion>0.9.3.0</ApplicationVersion>
     <ApplicationRevision>0</ApplicationRevision>
     <BootstrapperEnabled>true</BootstrapperEnabled>
   </PropertyGroup>
@@ -109,6 +109,8 @@
     <Compile Include="Excel\ExcelProofLinks.cs" />
     <Compile Include="Infrastructure\WorkbookProjectContext.cs" />
     <Compile Include="Infrastructure\TesseractOcrEngine.cs" />
+    <Compile Include="Infrastructure\IsolatedOcrEngine.cs" />
+    <Compile Include="Infrastructure\OcrWorkerEntry.cs" />
     <Compile Include="Infrastructure\DocumentIndexer.cs" />
     <Compile Include="Infrastructure\DiagnosticLog.cs" />
     <Compile Include="Infrastructure\NativePdfiumLoader.cs" />
@@ -177,6 +179,27 @@
     <Error
       Condition="!Exists('$(TargetDir)Microsoft.Office.Tools.Common.v4.0.Utilities.dll')"
       Text="La dépendance Microsoft.Office.Tools.Common.v4.0.Utilities.dll n'a pas été copiée dans $(TargetDir). La tâche VSTO FindRibbons ne peut pas charger l'add-in." />
+  </Target>
+  <Target Name="BuildIsolatedOcrWorkers" BeforeTargets="AssignTargetPaths">
+    <MakeDir Directories="$(IntermediateOutputPath)" />
+    <Csc Sources="$(ProjectDir)Infrastructure\OcrWorkerBootstrap.cs"
+         OutputAssembly="$(IntermediateOutputPath)Doctracker.OcrWorker.x86.exe" TargetType="Exe" Platform="x86" Optimize="true" />
+    <Csc Sources="$(ProjectDir)Infrastructure\OcrWorkerBootstrap.cs"
+         OutputAssembly="$(IntermediateOutputPath)Doctracker.OcrWorker.x64.exe" TargetType="Exe" Platform="x64" Optimize="true" />
+    <ItemGroup>
+      <Content Include="$(IntermediateOutputPath)Doctracker.OcrWorker.x86.exe">
+        <Link>Doctracker.OcrWorker.x86.exe</Link>
+        <TargetPath>Doctracker.OcrWorker.x86.exe</TargetPath>
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <PublishState>Include</PublishState>
+      </Content>
+      <Content Include="$(IntermediateOutputPath)Doctracker.OcrWorker.x64.exe">
+        <Link>Doctracker.OcrWorker.x64.exe</Link>
+        <TargetPath>Doctracker.OcrWorker.x64.exe</TargetPath>
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <PublishState>Include</PublishState>
+      </Content>
+    </ItemGroup>
   </Target>
   <Target Name="EnsureOcrAssets" BeforeTargets="AssignTargetPaths">
     <Exec

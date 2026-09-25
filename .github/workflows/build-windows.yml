@@ -150,6 +150,8 @@ jobs:
             @{ Label = "assistant d'installation PowerShell"; Minimum = 1; Files = @(Get-ChildItem $root -Recurse -File -Filter "Install-Doctracker.ps1") },
             @{ Label = "manifest .vsto"; Minimum = 1; Files = @(Get-ChildItem $root -Recurse -File -Filter "*.vsto") },
             @{ Label = "manifest applicatif"; Minimum = 1; Files = @(Get-ChildItem $root -Recurse -File -Filter "*.dll.manifest*") },
+            @{ Label = "OCR worker x86"; Minimum = 1; Files = @(Get-ChildItem $root -Recurse -File -Filter "Doctracker.OcrWorker.x86.exe*") },
+            @{ Label = "OCR worker x64"; Minimum = 1; Files = @(Get-ChildItem $root -Recurse -File -Filter "Doctracker.OcrWorker.x64.exe*") },
             @{ Label = "Doctracker.AddIn.dll"; Minimum = 1; Files = @(Get-ChildItem $root -Recurse -File -Filter "Doctracker.AddIn.dll*") },
             @{ Label = "fra.traineddata"; Minimum = 1; Files = @(Get-ChildItem $root -Recurse -File -Filter "fra.traineddata*") },
             @{ Label = "eng.traineddata"; Minimum = 1; Files = @(Get-ChildItem $root -Recurse -File -Filter "eng.traineddata*") },
@@ -169,6 +171,9 @@ jobs:
             if ($manifestText -notmatch "$architecture\\pdfium\.dll(?:\.deploy)?") {
               throw "Le manifeste ClickOnce ne référence pas $architecture\pdfium.dll."
             }
+          }
+          foreach ($architecture in @("x86", "x64")) {
+            if ($manifestText -notmatch "Doctracker\.OcrWorker\.$architecture\.exe(?:\.deploy)?") { throw "Worker OCR $architecture absent du manifeste." }
           }
           $setup = (Get-ChildItem $root -Recurse -File -Filter "setup.exe" | Select-Object -First 1).FullName
           $signature = Get-AuthenticodeSignature $setup
