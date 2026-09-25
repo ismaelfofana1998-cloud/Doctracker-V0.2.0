@@ -18,6 +18,8 @@ Les temporaires de requête/résultat sont sous `%LOCALAPPDATA%\Doctracker\OcrWo
 
 Les journaux distinguent désormais : préparation de la zone, zone prête, reconnaissance démarrée, reconnaissance terminée, résultat prêt et code de sortie du moteur. Aucun contenu reconnu n'est écrit dans les journaux.
 
+Une reconnaissance sans texte retourne immédiatement un résultat vide, sans parcourir les positions de mots dans le moteur natif. Le format Nombre continue de refuser une extraction non numérique plutôt que d’inventer une valeur.
+
 Le bouton de suppression reconnaît une sélection de plusieurs cellules et passe à la suppression des snips de cette plage. Le clic droit sur une preuve conserve la suppression de cette preuve précise.
 
 ## Validation et limites

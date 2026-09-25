@@ -29,9 +29,12 @@ namespace Doctracker.AddIn.Infrastructure
                     EnsureEngine();
                     using (var pix = PixConverter.ToPix(bitmap))
                     using (var page = engine.Process(pix, table ? PageSegMode.SingleBlock : PageSegMode.Auto))
-                    using (var iterator = page.GetIterator())
                     {
                         var result = new PageTextRecord { Text = (page.GetText() ?? "").Trim() };
+                        // Do not ask native iterators for word positions when recognition is empty.
+                        if(string.IsNullOrWhiteSpace(result.Text))return result;
+                        using (var iterator = page.GetIterator())
+                        {
                         var line = 0;
                         iterator.Begin();
                         do
@@ -49,6 +52,7 @@ namespace Doctracker.AddIn.Infrastructure
                                 X = left, Y = top, Width = right - left, Height = bottom - top });
                         } while (iterator.Next(PageIteratorLevel.Word));
                         return result;
+                        }
                     }
                 }
                 catch (DllNotFoundException exception) { throw NativeFailure(exception); }

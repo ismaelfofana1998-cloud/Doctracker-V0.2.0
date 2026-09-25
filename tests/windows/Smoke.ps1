@@ -231,6 +231,12 @@ try {
     $page=$ocr.RecognizeRegion($imagePath,1,$ocrZone,$false,[Threading.CancellationToken]::None)
     if($page.Text -notmatch '12345'){throw 'OCR did not recover after a failed child.'}
 
+    $blank=[Drawing.Bitmap]::new(200,100)
+    $blankGraphics=[Drawing.Graphics]::FromImage($blank);$blankGraphics.Clear([Drawing.Color]::White);$blankGraphics.Dispose()
+    try {$emptyPage=$ocr.Recognize($blank,$false);if($emptyPage.Text -ne '' -or $emptyPage.Words.Count -ne 0){throw 'Blank OCR should produce an empty result.'}}
+    finally {$blank.Dispose()}
+    Write-Host 'PASS: blank OCR without native word iteration'
+
     # Unexpected child exit and a hung child must not terminate the host.
     $crashWorker=Join-Path $temp 'fake-crash.exe'
     Add-Type -TypeDefinition 'public static class CrashChild {public static int Main(string[] args){System.Environment.Exit(139);return 139;}}' -OutputAssembly $crashWorker -OutputType ConsoleApplication
@@ -240,7 +246,7 @@ try {
     $workRoot=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Doctracker/OcrWork'
     $beforeWork=@(Get-ChildItem $workRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object Name)
     foreach($scenario in @(@{Path=$crashWorker;Timeout=3000;Cancel=$false},@{Path=$hangWorker;Timeout=1200;Cancel=$false},@{Path=$hangWorker;Timeout=5000;Cancel=$true})) {
-        $isolated=$constructor.Invoke([object[]]@($scenario.Path,[int]$scenario.Timeout))
+        $isolated=$constructor.Invoke([object[]]@([string]$scenario.Path,[int]$scenario.Timeout))
         $cancel=[Threading.CancellationTokenSource]::new();$rejected=$false
         if($scenario.Cancel){$cancel.CancelAfter(500)}
         $elapsed=[Diagnostics.Stopwatch]::StartNew()
