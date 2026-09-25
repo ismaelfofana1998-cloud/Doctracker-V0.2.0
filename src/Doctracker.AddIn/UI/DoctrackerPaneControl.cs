@@ -30,7 +30,7 @@ namespace Doctracker.AddIn.UI
         private readonly ListBox searchResults;
         private readonly Label status;
 
-        private SnipType? activeSnipType;
+        private SnipType? activeSnipType = SnipType.Text;
         private readonly ExcelInterop.Workbook workbook;
         private CancellationTokenSource operation;
         private ProjectState boundProject;
@@ -69,6 +69,7 @@ namespace Doctracker.AddIn.UI
             cancelButton = view.Cancel;
             canvas = view.Canvas;
             WireAnnotationActions();
+            view.SetMode(SnipType.Text);
             documents.SelectedIndexChanged += Documents_SelectedIndexChanged;
             searchResults.SelectedIndexChanged += SearchResults_SelectedIndexChanged;
             view.Search.Click += (sender, args) => SearchFromPane();
@@ -143,8 +144,8 @@ namespace Doctracker.AddIn.UI
         public void SetSnipMode(SnipType? type)
         {
             if (context.IsBusy) return;
-            activeSnipType = type;
-            view.SetMode(type);
+            activeSnipType = type ?? SnipType.Text;
+            view.SetMode(activeSnipType);
             Ribbon.DoctrackerRibbon.Instance?.Refresh();
             SetStatus(type.HasValue ? SnipTheme.LabelFor(type.Value) : "Prêt");
         }
@@ -204,7 +205,7 @@ namespace Doctracker.AddIn.UI
             }
             if (IsDisposed) return;
             SetStatus((result.Cancelled ? "Import arrêté · " : "Import terminé · ") + result.ImportedCount +
-                " fichier(s), " + result.Errors.Count + " erreur(s). Texte préparé à la première recherche.");
+                " fichier(s), " + result.Errors.Count + " erreur(s). Reconnaissance disponible à la demande.");
             if (result.Errors.Count > 0) MessageBox.Show(this, string.Join("\n", result.Errors.Take(30)), "Pièces non importées");
         }
 
@@ -244,7 +245,10 @@ namespace Doctracker.AddIn.UI
                         recognized = ExtractPageSelection(native, rectangle);
                     }
                     if (recognized == null)
+                    {
+                        SetStatus("Reconnaissance du texte dans la zone sélectionnée…");
                         using (var crop = canvas.CropSelection()) recognized = await Task.Run(() => ocr.Recognize(crop, type == SnipType.Table));
+                    }
                 }
                 operation.Token.ThrowIfCancellationRequested();
                 EnsureActiveWorkbook();
@@ -345,7 +349,7 @@ namespace Doctracker.AddIn.UI
                 BeginOperation();
                 searchResults.DataSource = null; view.HideResults();
                 var scope=SearchScope();
-                var errors = await IndexMissingAsync(scope.Documents, false);
+                var errors = await PrepareSearchTextAsync(scope.Documents);
                 scope.Documents=scope.Documents.Where(d=>d.IndexComplete && string.IsNullOrEmpty(d.IndexError)).ToList();
                 var results = await Task.Run(() => OccurrenceSearch.Find(scope, query, 201, operation.Token)
                     .Select(candidate => new SearchResultItem { Candidate = candidate,
@@ -423,7 +427,7 @@ namespace Doctracker.AddIn.UI
                 for (var row = 1; row <= rowCount; row++)
                     queries.Add(Enumerable.Range(1, columnCount).Select(column => ExcelCellGateway.QueryText((ExcelInterop.Range)input.Cells[row, column])).ToArray());
                 BeginOperation();
-                var errors = await IndexMissingAsync(VisibleDocuments().ToList(), false);
+                var errors = await PrepareSearchTextAsync(VisibleDocuments().ToList());
                 if (errors.Count > 0) throw new InvalidOperationException("Matching interrompu : certaines pièces ne sont pas indexées.\n" + string.Join("\n", errors));
                 var scope=SearchScope();scope.Documents=scope.Documents.Where(d=>d.IndexComplete).ToList();
                 var results = await Task.Run(() => context.Matcher.FindBatch(scope,queries.Select(q=>(IReadOnlyList<string>)q).ToList(),true,operation.Token));
@@ -747,12 +751,28 @@ namespace Doctracker.AddIn.UI
             cancelButton.Visible = busy && operation != null;
         }
 
-        private Task<List<string>> IndexMissingAsync(IEnumerable<DocumentRecord> scope = null, bool retryFailed = true, bool forceReindex = false)
+        private async Task<List<string>> PrepareSearchTextAsync(IEnumerable<DocumentRecord> documentsToSearch)
+        {
+            var scope=documentsToSearch.ToList();
+            SetStatus("Lecture du texte natif · "+scope.Count+" document(s) dans le dossier sélectionné…");
+            var errors=await IndexMissingAsync(scope,false,false,false);
+            operation.Token.ThrowIfCancellationRequested();
+            var scanned=scope.Where(d=>!d.IndexComplete && string.IsNullOrEmpty(d.IndexError)).ToList();
+            if(scanned.Count==0)return errors;
+            if(MessageBox.Show(this,"Reconnaître le texte de "+scanned.Count+" document(s) du dossier sélectionné ? Cela peut prendre du temps.",
+                "Reconnaissance nécessaire",MessageBoxButtons.YesNo,MessageBoxIcon.Question)!=DialogResult.Yes)
+                throw new OperationCanceledException();
+            SetStatus("Reconnaissance en cours · "+scanned.Count+" document(s)…");
+            errors.AddRange(await IndexMissingAsync(scanned,false,false,true));
+            return errors;
+        }
+
+        private Task<List<string>> IndexMissingAsync(IEnumerable<DocumentRecord> scope = null, bool retryFailed = true, bool forceReindex = false, bool allowOcr = true)
         {
             var indexer = new DocumentIndexer(context.Store, ocr);
             var token = operation.Token;
             return Task.Run(() => indexer.IndexMissing(context.State,
-                (name, page, count) => SetStatusThreadSafe("Indexation : " + name + " — " + page + "/" + count), token, scope, retryFailed, forceReindex));
+                (name, page, count) => SetStatusThreadSafe((allowOcr ? "Reconnaissance : " : "Lecture du texte : ") + name + " — " + page + "/" + count), token, scope, retryFailed, forceReindex, allowOcr));
         }
 
         private PendingWrite PrepareWrite(ExcelInterop.Range target, DocumentRecord document, int page, RectangleF zone, SnipType type, string text)

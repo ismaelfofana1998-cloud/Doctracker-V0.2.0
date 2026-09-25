@@ -20,7 +20,13 @@ namespace Doctracker.AddIn.UI
     internal sealed class DocumentCanvas : UserControl
     {
         private readonly Panel viewport;
-        private readonly PictureBox picture;
+        private PictureBox picture;
+        private readonly PictureBox emptyPicture;
+        private readonly Dictionary<int,PictureBox> pagePictures = new Dictionary<int,PictureBox>();
+        private readonly List<Rectangle> pageBounds = new List<Rectangle>();
+        private bool layingOutPages, refreshingPages;
+        private readonly NumericUpDown pageNumber = new NumericUpDown {Minimum=1,Maximum=1,Width=58,Value=1};
+        private bool updatingPageNumber;
         private readonly Label pageLabel;
         private readonly Label zoomLabel;
         private readonly Button previousButton;
@@ -45,13 +51,17 @@ namespace Doctracker.AddIn.UI
         private DocumentComment commentPreview;
         private RectangleF commentOriginal;
         private bool commentDragging;
+        private bool proofDragging;
+        private RectangleF proofOriginal, proofPreview;
+        private int proofHandle;
+        public event Action<string,RectangleF> ProofGeometryChanged;
         private int commentHandle;
         public event Action<string,RectangleF> CommentGeometryChanged;
         public event Action<string> DeleteProofRequested;
         public event Action<string> ProofSelected;
         public event Action<string> EditCommentRequested;
         public event Action<string> DeleteCommentRequested;
-        public void SetDocument(DocumentRecord value) { if(document?.Id!=value?.Id)selectedCommentId=null;document = value; picture.Invalidate(); }
+        public void SetDocument(DocumentRecord value) { if(document?.Id!=value?.Id)selectedCommentId=null;document = value; InvalidatePages(); }
         private Point dragStart;
         private Point dragEnd;
         private bool dragging;
@@ -62,9 +72,9 @@ namespace Doctracker.AddIn.UI
         private readonly List<SnipRecord> proofs = new List<SnipRecord>();
         private SnipType selectionType = SnipType.Text;
         private string selectedProofId;
-        public SnipType? ActiveType { get; set; }
+        public SnipType? ActiveType { get; set; } = SnipType.Text;
         public void SetProofs(IEnumerable<SnipRecord> records)
-        { proofs.Clear(); proofs.AddRange(records); picture.Invalidate(); }
+        { proofs.Clear(); proofs.AddRange(records); InvalidatePages(); }
 
 
         public DocumentCanvas()
@@ -121,6 +131,9 @@ namespace Doctracker.AddIn.UI
 
             toolbar.Controls.Add(previousButton);
             toolbar.Controls.Add(nextButton);
+            pageNumber.AccessibleName="Aller à la page";
+            pageNumber.ValueChanged+=(s,e)=>{if(!updatingPageNumber)ShowPage((int)pageNumber.Value-1);};
+            toolbar.Controls.Add(pageNumber);
             toolbar.Controls.Add(pageLabel);
             toolbar.Controls.Add(zoomOutButton);
             toolbar.Controls.Add(fitButton);
@@ -146,6 +159,7 @@ namespace Doctracker.AddIn.UI
                 Cursor = Cursors.Cross,
                 TabStop = false
             };
+            emptyPicture=picture; picture.Tag=0;
             picture.MouseDown += Picture_MouseDown;
             picture.MouseMove += Picture_MouseMove;
             picture.MouseUp += Picture_MouseUp;
@@ -156,16 +170,18 @@ namespace Doctracker.AddIn.UI
             };
             picture.KeyDown+=(s,e)=>{if(e.KeyCode==Keys.Escape)CancelCommentDrag();};
             viewport.KeyDown+=(s,e)=>{if(e.KeyCode==Keys.Escape)CancelCommentDrag();};
-            picture.MouseCaptureChanged+=(s,e)=>{if(!picture.Capture && commentDragging)CancelCommentDrag();};
-            picture.Paint += Picture_Paint;
+            picture.MouseCaptureChanged+=(s,e)=>{if(!picture.Capture && (commentDragging || proofDragging))CancelCommentDrag();};
+            picture.Paint += PaintPage;
             // Hover must not steal keyboard focus from Excel or the search box.
             MouseEventHandler wheel = (s,e) => {
-                if ((ModifierKeys & Keys.Control) == 0) return;
+                if ((ModifierKeys & Keys.Control) == 0)
+                { if(IsHandleCreated)BeginInvoke(new Action(RefreshVisiblePages)); return; }
                 SetZoom(zoom * (e.Delta > 0 ? 1.15 : 1 / 1.15), false);
                 if (e is HandledMouseEventArgs handled) handled.Handled = true;
             };
             picture.MouseWheel += wheel; viewport.MouseWheel += wheel;
 
+            viewport.Scroll+=(s,e)=>RefreshVisiblePages();
             viewport.Controls.Add(picture);
             Controls.Add(viewport);
             Controls.Add(toolbar);
@@ -249,10 +265,10 @@ namespace Doctracker.AddIn.UI
             return normalizedSelection.Value;
         }
 
-        public Bitmap CropSelection()
+        public Bitmap CropSelection() => CropRegion(GetNormalizedSelection());
+        public Bitmap CropRegion(RectangleF selection)
         {
             if (currentImage == null) throw new InvalidOperationException("No document is open.");
-            var selection = GetNormalizedSelection();
             var crop = Rectangle.FromLTRB(
                 Math.Max(0, (int)Math.Floor(selection.Left * currentImage.Width)),
                 Math.Max(0, (int)Math.Floor(selection.Top * currentImage.Height)),
@@ -282,80 +298,122 @@ namespace Doctracker.AddIn.UI
             picture.Invalidate();
         }
 
+        private int PageCount => pdf==null ? (currentPath==null?0:imagePageCount) : pdf.PageCount;
+        private void InvalidatePages() { foreach(var surface in pagePictures.Values)surface.Invalidate();picture.Invalidate(); }
+        public void GoToPage(int number) => ShowPage(number-1);
         private void ShowPage(int requestedIndex)
         {
-            var pageCount = pdf == null ? (currentPath == null ? 0 : imagePageCount) : pdf.PageCount;
-            if (requestedIndex < 0 || requestedIndex >= pageCount || (requestedIndex == pageIndex && currentImage != null)) return;
-            CancelCommentDrag();selectedCommentId=null;
-            pageIndex = requestedIndex;
-            selectedProofId = null;
-            normalizedSelection = null;
-            RenderCurrentPage();
+            if(requestedIndex<0 || requestedIndex>=PageCount)return;
+            CancelCommentDrag(); selectedCommentId=null; selectedProofId=null; normalizedSelection=null;
+            ActivatePage(GetPagePicture(requestedIndex));
+            if(pageBounds.Count!=PageCount)UpdatePictureLayout();
+            viewport.AutoScrollPosition=new Point(Math.Max(0,-viewport.AutoScrollPosition.X),Math.Max(0,pageBounds[requestedIndex].Top-4));
+            RefreshVisiblePages(); UpdateNavigationState();
         }
-
+        private void ActivatePage(PictureBox surface)
+        {
+            if(surface==null || surface.Image==null)return;
+            var next=(int)surface.Tag;
+            if(pageIndex!=next){normalizedSelection=null;selectedProofId=null;selectedCommentId=null;}
+            picture=surface;currentImage=surface.Image;pageIndex=next;UpdateNavigationState();
+        }
+        private PictureBox GetPagePicture(int index)
+        {
+            if(pagePictures.TryGetValue(index,out var existing))return existing;
+            var surface=index==0?emptyPicture:new PictureBox {SizeMode=PictureBoxSizeMode.StretchImage,BackColor=Color.White,Cursor=Cursors.Cross,TabStop=false};
+            surface.Tag=index;
+            if(surface!=emptyPicture)
+            {
+                surface.MouseDown+=Picture_MouseDown;surface.MouseMove+=Picture_MouseMove;surface.MouseUp+=Picture_MouseUp;surface.Paint+=PaintPage;
+                surface.MouseDoubleClick+=(s,e)=>{ActivatePage(surface);var comment=CommentAt(e.Location);if(e.Button==MouseButtons.Left && comment!=null){CancelCommentDrag();EditCommentRequested?.Invoke(comment.Id);}};
+                surface.MouseCaptureChanged+=(s,e)=>{if(!surface.Capture && (commentDragging || proofDragging))CancelCommentDrag();};
+                surface.MouseWheel+=(s,e)=>{
+                    if((ModifierKeys & Keys.Control)!=0){SetZoom(zoom*(e.Delta>0?1.15:1/1.15),false);if(e is HandledMouseEventArgs handled)handled.Handled=true;}
+                    else if(IsHandleCreated)BeginInvoke(new Action(RefreshVisiblePages));
+                };
+                viewport.Controls.Add(surface);
+            }
+            try
+            {
+                if(pdf!=null)
+                {
+                    var size=DocumentIndexer.RenderSize(pdf.PageSizes[index]);
+                    surface.Image=pdf.Render(index,size.Width,size.Height,144,144,PdfRenderFlags.Annotations|PdfRenderFlags.LcdText);
+                }
+                else using(var source=Image.FromFile(currentPath))
+                {if(imagePageCount>1)source.SelectActiveFrame(FrameDimension.Page,index);surface.Image=new Bitmap(source);}
+                pagePictures[index]=surface;return surface;
+            }
+            catch {if(surface!=emptyPicture){viewport.Controls.Remove(surface);surface.Dispose();}throw;}
+        }
         private void RenderCurrentPage()
         {
-            if (currentImage != null)
-            {
-                picture.Image = null;
-                currentImage.Dispose();
-                currentImage = null;
-            }
-
-            if (pdf != null)
-            {
-                var size = DocumentIndexer.RenderSize(pdf.PageSizes[pageIndex]);
-                currentImage = pdf.Render(
-                    pageIndex, size.Width, size.Height, 144, 144,
-                    PdfRenderFlags.Annotations | PdfRenderFlags.LcdText);
-                pageLabel.Text = "Page " + (pageIndex + 1) + " / " + pdf.PageCount;
-            }
-            else if (!string.IsNullOrWhiteSpace(currentPath))
-            {
-                using (var source = Image.FromFile(currentPath))
-                {
-                    if (imagePageCount > 1) source.SelectActiveFrame(FrameDimension.Page, pageIndex);
-                    currentImage = new Bitmap(source);
-                }
-                pageLabel.Text = "Page " + (pageIndex + 1) + " / " + imagePageCount;
-            }
-            else
-            {
-                pageLabel.Text = "Aucun document";
-            }
-
-            picture.Image = currentImage;
-            UpdatePictureLayout();
-            UpdateNavigationState();
-            picture.Invalidate();
+            ActivatePage(GetPagePicture(pageIndex));UpdatePictureLayout();
         }
-
         private void UpdatePictureLayout()
         {
-            if (currentImage == null) return;
-
-            viewport.AutoScroll = !fitToViewport || fitWidth;
-            if (fitToViewport)
+            if(currentImage==null || layingOutPages)return;
+            layingOutPages=true;
+            try
             {
-                var availableWidth = Math.Max(120, viewport.Width - viewport.Padding.Horizontal - SystemInformation.VerticalScrollBarWidth - 2);
-                var availableHeight = Math.Max(120, viewport.ClientSize.Height - viewport.Padding.Vertical - 4);
-                var widthRatio = availableWidth / (double)currentImage.Width;
-                var heightRatio = availableHeight / (double)currentImage.Height;
-                zoom = fitWidth ? widthRatio : Math.Min(widthRatio, heightRatio);
-                zoom = Math.Max(0.02d, Math.Min(3.0d, zoom));
+                var oldTop=-viewport.AutoScrollPosition.Y;
+                var fraction=pageBounds.Count>pageIndex ? (oldTop-pageBounds[pageIndex].Top)/(double)Math.Max(1,pageBounds[pageIndex].Height) : 0;
+                var availableWidth=Math.Max(120,viewport.Width-viewport.Padding.Horizontal-SystemInformation.VerticalScrollBarWidth-2);
+                var availableHeight=Math.Max(120,viewport.ClientSize.Height-viewport.Padding.Vertical-4);
+                pageBounds.Clear();var top=viewport.Padding.Top;var widest=0;
+                for(var index=0;index<PageCount;index++)
+                {
+                    var natural=pdf==null?new Size(currentImage.Width,currentImage.Height):DocumentIndexer.RenderSize(pdf.PageSizes[index]);
+                    var ratio=fitToViewport ? (fitWidth?availableWidth/(double)natural.Width:Math.Min(availableWidth/(double)natural.Width,availableHeight/(double)natural.Height)) : zoom;
+                    ratio=Math.Max(.02,Math.Min(3,ratio));if(index==pageIndex)zoom=ratio;
+                    var width=Math.Max(2,(int)Math.Round(natural.Width*ratio));var height=Math.Max(2,(int)Math.Round(natural.Height*ratio));
+                    pageBounds.Add(new Rectangle(Math.Max(4,(availableWidth-width)/2+4),top,width,height));
+                    top=checked(top+height+16);widest=Math.Max(widest,width);
+                }
+                viewport.AutoScroll=true;
+                viewport.AutoScrollMinSize=new Size(widest+8,top);
+                viewport.AutoScrollPosition=new Point(Math.Max(0,-viewport.AutoScrollPosition.X),Math.Max(0,pageBounds[pageIndex].Top+(int)(fraction*pageBounds[pageIndex].Height)));
+                zoomLabel.Text=Math.Round(zoom*DisplayScale()*100)+" %";
             }
-
-            var width = Math.Max(2, (int)Math.Round(currentImage.Width * zoom));
-            var height = Math.Max(2, (int)Math.Round(currentImage.Height * zoom));
-            if (fitToViewport && !fitWidth) viewport.AutoScrollPosition = Point.Empty;
-            viewport.AutoScrollMinSize = fitToViewport && !fitWidth ? Size.Empty : new Size(width + viewport.Padding.Horizontal, height + viewport.Padding.Vertical);
-            picture.Size = new Size(width, height);
-            // Centre fitted pages; preserve the real scroll origin when zoomed in.
-            picture.Location = new Point(Math.Max(viewport.Padding.Left, (viewport.ClientSize.Width - width) / 2) + viewport.AutoScrollPosition.X,
-                viewport.Padding.Top + viewport.AutoScrollPosition.Y);
-            picture.Image = currentImage;
-            picture.Invalidate();
-            zoomLabel.Text = Math.Round(zoom * DisplayScale() * 100d) + " %";
+            finally {layingOutPages=false;}
+            RefreshVisiblePages();
+        }
+        private void RefreshVisiblePages()
+        {
+            if(layingOutPages || refreshingPages || currentPath==null || pageBounds.Count==0 || IsDisposed)return;
+            refreshingPages=true;
+            try
+            {
+                var top=-viewport.AutoScrollPosition.Y;var bottom=top+viewport.ClientSize.Height;
+                var visible=Enumerable.Range(0,pageBounds.Count).Where(i=>pageBounds[i].Bottom>=top && pageBounds[i].Top<=bottom).ToList();
+                if(visible.Count==0)return;
+                var active=visible.FirstOrDefault(i=>pageBounds[i].Bottom>top+Math.Min(40,viewport.Height/4));
+                if(!dragging && !commentDragging && !proofDragging && !panning)ActivatePage(GetPagePicture(active));
+                var keep=new HashSet<int>(visible);keep.Add(pageIndex);
+                foreach(var old in pagePictures.Keys.Where(i=>!keep.Contains(i)).ToList())
+                {
+                    var surface=pagePictures[old];pagePictures.Remove(old);var image=surface.Image;surface.Image=null;image?.Dispose();
+                    if(surface!=emptyPicture){viewport.Controls.Remove(surface);surface.Dispose();}else surface.Visible=false;
+                }
+                foreach(var index in keep)
+                {
+                    var surface=GetPagePicture(index);var bounds=pageBounds[index];bounds.Offset(viewport.AutoScrollPosition);
+                    surface.Bounds=bounds;surface.Visible=true;surface.Invalidate();
+                }
+            }
+            finally {refreshingPages=false;}
+        }
+        private void PaintPage(object sender,PaintEventArgs e)
+        {
+            var surface=(PictureBox)sender;var oldPicture=picture;var oldImage=currentImage;var oldIndex=pageIndex;
+            var oldSelection=normalizedSelection;var oldDragging=dragging;var oldPreview=commentPreview;
+            try
+            {
+                picture=surface;currentImage=surface.Image;pageIndex=(int)surface.Tag;
+                if(pageIndex!=oldIndex){normalizedSelection=null;dragging=false;commentPreview=null;}
+                Picture_Paint(sender,e);
+            }
+            finally{picture=oldPicture;currentImage=oldImage;pageIndex=oldIndex;normalizedSelection=oldSelection;dragging=oldDragging;commentPreview=oldPreview;}
         }
 
         private void SetZoom(double requestedZoom, bool fit)
@@ -397,6 +455,7 @@ namespace Doctracker.AddIn.UI
 
         private void Picture_MouseDown(object sender, MouseEventArgs e)
         {
+            ActivatePage(sender as PictureBox);
             if (currentImage == null) return;
             // Give Escape/zoom keys to the document only after an intentional click.
             viewport.Focus();
@@ -438,6 +497,16 @@ namespace Doctracker.AddIn.UI
                 commentDragging=true;normalizedSelection=null;picture.Capture=true;picture.Invalidate();return;
             }
             selectedCommentId=null;
+            var selectedProof=proofs.FirstOrDefault(p=>p.Id==selectedProofId && p.PageNumber==CurrentPageNumber);
+            var proofGrip=selectedProof==null?-1:CommentHandleAt(ProofFrame(selectedProof),e.Location);
+            var proofHit=proofGrip>0?selectedProof:ProofAt(new PointF(e.X/(float)picture.Width,e.Y/(float)picture.Height));
+            if(proofHit!=null && (ModifierKeys & Keys.Alt)==0 && !CommentMode)
+            {
+                selectedProofId=proofHit.Id;selectionType=proofHit.SourceType??proofHit.Type;
+                proofOriginal=new RectangleF((float)proofHit.X,(float)proofHit.Y,(float)proofHit.Width,(float)proofHit.Height);
+                proofPreview=proofOriginal;normalizedSelection=proofOriginal;proofHandle=proofGrip>0?proofGrip:0;
+                proofDragging=true;dragStart=e.Location;picture.Capture=true;picture.Invalidate();return;
+            }
             picture.Capture = true;
             dragging = true;
             selectionType = ActiveType ?? SnipType.Text;
@@ -449,6 +518,12 @@ namespace Doctracker.AddIn.UI
 
         private void Picture_MouseMove(object sender, MouseEventArgs e)
         {
+            if(proofDragging)
+            {
+                var box=CommentGeometry.Transform(new NormalizedRectangle(proofOriginal.X,proofOriginal.Y,proofOriginal.Width,proofOriginal.Height),
+                    (e.X-dragStart.X)/(double)picture.Width,(e.Y-dragStart.Y)/(double)picture.Height,proofHandle);
+                proofPreview=new RectangleF((float)box.X,(float)box.Y,(float)box.Width,(float)box.Height);normalizedSelection=proofPreview;picture.Invalidate();return;
+            }
             if(commentDragging && commentPreview!=null)
             {
                 var box=CommentGeometry.Transform(new NormalizedRectangle(commentOriginal.X,commentOriginal.Y,commentOriginal.Width,commentOriginal.Height),
@@ -458,7 +533,8 @@ namespace Doctracker.AddIn.UI
             if(!dragging && !panning)
             {
                 var selected=document?.Comments.FirstOrDefault(c=>c.Id==selectedCommentId && c.PageNumber==CurrentPageNumber);
-                var handle=selected==null?-1:CommentHandleAt(selected,e.Location);
+                var chosenProof=proofs.FirstOrDefault(p=>p.Id==selectedProofId && p.PageNumber==CurrentPageNumber);
+                var handle=selected!=null?CommentHandleAt(selected,e.Location):chosenProof==null?-1:CommentHandleAt(ProofFrame(chosenProof),e.Location);
                 picture.Cursor=handle==1||handle==5?Cursors.SizeNWSE:handle==3||handle==7?Cursors.SizeNESW:handle==2||handle==6?Cursors.SizeNS:handle==4||handle==8?Cursors.SizeWE:CommentAt(e.Location)!=null?Cursors.SizeAll:Cursors.Cross;
             }
             if (panning)
@@ -477,6 +553,13 @@ namespace Doctracker.AddIn.UI
 
         private void Picture_MouseUp(object sender, MouseEventArgs e)
         {
+            if(proofDragging && e.Button==MouseButtons.Left)
+            {
+                var id=selectedProofId;var preview=proofPreview;proofDragging=false;picture.Capture=false;
+                if(Math.Abs(e.X-dragStart.X)>2 || Math.Abs(e.Y-dragStart.Y)>2)ProofGeometryChanged?.Invoke(id,preview);
+                else ProofSelected?.Invoke(id);
+                picture.Invalidate();return;
+            }
             if(commentDragging && e.Button==MouseButtons.Left)
             {
                 var preview=commentPreview;commentDragging=false;commentPreview=null;picture.Capture=false;
@@ -529,6 +612,14 @@ namespace Doctracker.AddIn.UI
                     (int)(proof.Width * picture.Width), (int)(proof.Height * picture.Height));
                 DrawHighlight(e.Graphics, bounds, SnipTheme.ColorFor(proof.SourceType ?? proof.Type), false);
             }
+            var selectedSnip=proofs.FirstOrDefault(p=>p.Id==selectedProofId && p.PageNumber==CurrentPageNumber);
+            if(selectedSnip!=null)
+            {
+                var frame=ProofFrame(selectedSnip);
+                if(proofDragging){frame.X=proofPreview.X;frame.Y=proofPreview.Y;frame.Width=proofPreview.Width;frame.Height=proofPreview.Height;}
+                foreach(var point in CommentHandles(frame))
+                {var size=Math.Max(6,Font.Height/2);var box=new RectangleF(point.X-size/2f,point.Y-size/2f,size,size);e.Graphics.FillRectangle(Brushes.White,box);using(var pen=new Pen(SnipTheme.ColorFor(selectedSnip.SourceType??selectedSnip.Type)))e.Graphics.DrawRectangle(pen,box.X,box.Y,box.Width,box.Height);}
+            }
             Rectangle rectangle;
             if (dragging)
             {
@@ -551,6 +642,7 @@ namespace Doctracker.AddIn.UI
             DrawHighlight(e.Graphics, rectangle, CommentMode ? Color.Red : SnipTheme.ColorFor(selectionType), true);
         }
 
+        private static DocumentComment ProofFrame(SnipRecord snip) => new DocumentComment {X=snip.X,Y=snip.Y,Width=snip.Width,Height=snip.Height};
         private DocumentComment CommentAt(Point point)=>document?.Comments.LastOrDefault(c=>c.PageNumber==CurrentPageNumber && DocumentOverlay.Bounds(c,picture.Size).Contains(point));
         private PointF[] CommentHandles(DocumentComment comment)
         {
@@ -563,7 +655,7 @@ namespace Doctracker.AddIn.UI
             for(var i=0;i<handles.Length;i++)if(Math.Abs(handles[i].X-point.X)<=tolerance && Math.Abs(handles[i].Y-point.Y)<=tolerance)return i+1;
             return -1;
         }
-        private void CancelCommentDrag(){commentDragging=false;commentPreview=null;picture.Capture=false;picture.Invalidate();}
+        private void CancelCommentDrag(){if(proofDragging)normalizedSelection=proofOriginal;proofDragging=false;commentDragging=false;commentPreview=null;picture.Capture=false;picture.Invalidate();}
         private static void DrawHighlight(Graphics graphics, Rectangle bounds, Color color, bool selected)
         {
             if (bounds.Width <= 0 || bounds.Height <= 0) return;
@@ -583,16 +675,21 @@ namespace Doctracker.AddIn.UI
 
         private void RevealSelection()
         {
-            if (!normalizedSelection.HasValue || (fitToViewport && !fitWidth)) return;
+            if (!normalizedSelection.HasValue) return;
             var zone = normalizedSelection.Value;
             var x = (int)((zone.X + zone.Width / 2) * picture.Width) + viewport.Padding.Left;
-            var y = (int)((zone.Y + zone.Height / 2) * picture.Height) + viewport.Padding.Top;
+            var y = (int)((zone.Y + zone.Height / 2) * picture.Height) + pageBounds[pageIndex].Top;
             viewport.AutoScrollPosition = new Point(Math.Max(0, x - viewport.ClientSize.Width / 2), Math.Max(0, y - viewport.ClientSize.Height / 2));
+            RefreshVisiblePages();
         }
 
         private void UpdateNavigationState()
         {
             var pageCount = pdf == null ? (currentPath == null ? 0 : imagePageCount) : pdf.PageCount;
+            updatingPageNumber=true;
+            try{pageNumber.Maximum=Math.Max(1,pageCount);pageNumber.Value=Math.Max(1,Math.Min(pageCount,pageIndex+1));pageNumber.Enabled=pageCount>0;}
+            finally{updatingPageNumber=false;}
+            pageLabel.Text=pageCount==0?"Aucun document":" / "+pageCount;
             previousButton.Enabled = pageIndex > 0;
             nextButton.Enabled = pageIndex >= 0 && pageIndex < pageCount - 1;
             zoomOutButton.Enabled = currentImage != null;
@@ -629,11 +726,14 @@ namespace Doctracker.AddIn.UI
         {
             CancelCommentDrag();selectedCommentId=null;
             dragging = false; panning = false; picture.Capture = false;
-            picture.Image = null;
-            picture.Size = Size.Empty;
-            viewport.AutoScrollMinSize = Size.Empty;
-            viewport.AutoScrollPosition = Point.Empty;
-            if (currentImage != null) currentImage.Dispose();
+            currentPath=null;
+            foreach(var surface in pagePictures.Values)
+            {
+                var image=surface.Image;surface.Image=null;image?.Dispose();
+                if(surface!=emptyPicture){viewport.Controls.Remove(surface);surface.Dispose();}
+            }
+            pagePictures.Clear();pageBounds.Clear();picture=emptyPicture;picture.Image=null;picture.Size=Size.Empty;
+            viewport.AutoScrollMinSize=Size.Empty;viewport.AutoScrollPosition=Point.Empty;
             if (pdf != null) pdf.Dispose();
             currentImage = null;
             pdf = null;

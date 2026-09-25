@@ -71,8 +71,8 @@ namespace Doctracker.AddIn.UI
         public bool TryNavigateFromCell(ExcelInterop.Range target)
         {
             // Normal Excel double-click must never create a project or show an error.
-            if (target == null || target.Cells.CountLarge != 1 || target.Comment == null ||
-                !((string)target.Comment.Text()).Contains(Excel.ExcelCellGateway.MarkerPrefix)) return false;
+            if (target == null || target.Cells.CountLarge != 1 ||
+                new Excel.ExcelCellGateway(application).GetSnipIds(target).Count==0) return false;
             var found = false;
             Run(entry => { found = entry.Control.TryNavigateFromCell(target); if (found) entry.Pane.Visible = true; });
             return found;
@@ -86,8 +86,8 @@ namespace Doctracker.AddIn.UI
                 if (book == null || IsBusy(book)) return;
                 var window = application.ActiveWindow;
                 WindowPane existing;
-                if (target == null || target.Cells.CountLarge != 1 || target.Comment == null ||
-                    !((string)target.Comment.Text()).Contains(Excel.ExcelCellGateway.MarkerPrefix))
+                if (target == null || target.Cells.CountLarge != 1 ||
+                    new Excel.ExcelCellGateway(application).GetSnipIds(target).Count==0)
                 {
                     if (window != null && panes.TryGetValue(window.Hwnd, out existing)) existing.Control.ClearCellProof();
                     return;

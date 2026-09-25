@@ -4,6 +4,7 @@ using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
 using Doctracker.AddIn.Excel;
+using Doctracker.AddIn.Infrastructure;
 using Doctracker.Core.Geometry;
 using Doctracker.Core.Models;
 using Doctracker.Core.Services;
@@ -19,6 +20,7 @@ namespace Doctracker.AddIn.UI
             canvas.DeleteProofRequested += DeleteSnip;
             canvas.EditCommentRequested += EditDocumentComment;
             canvas.CommentGeometryChanged += ResizeDocumentComment;
+            canvas.ProofGeometryChanged += ResizeSnip;
             canvas.DeleteCommentRequested += DeleteDocumentComment;
             canvas.ProofSelected += id => {
                 if(context.IsBusy)return; focusedSnipId=id;
@@ -32,7 +34,9 @@ namespace Doctracker.AddIn.UI
         private void ToggleComment()
         {
             if(context.IsBusy)return;
-            activeSnipType=null;view.SetCommentMode(!canvas.CommentMode);
+            var enabled=!canvas.CommentMode;
+            activeSnipType=enabled?(SnipType?)null:SnipType.Text;view.SetCommentMode(enabled);
+            if(!enabled)view.SetMode(SnipType.Text);
             Ribbon.DoctrackerRibbon.Instance?.Refresh();
             SetStatus(canvas.CommentMode ? "Commentaire" : "Prêt");
         }
@@ -54,15 +58,7 @@ namespace Doctracker.AddIn.UI
                 }
                 if(target==null)
                 {
-                    foreach(ExcelInterop.Worksheet sheet in workbook.Worksheets)
-                    {
-                        ExcelInterop.Range linked;
-                        try{linked=sheet.Cells.SpecialCells(ExcelInterop.XlCellType.xlCellTypeComments);}
-                        catch(System.Runtime.InteropServices.COMException){continue;}
-                        foreach(ExcelInterop.Range cell in linked.Cells)
-                            if(cells.GetSnipIds(cell).Contains(snip.Id)){target=cell;break;}
-                        if(target!=null)break;
-                    }
+                    target=cells.LinkedCells(workbook).FirstOrDefault(cell=>cells.GetSnipIds(cell).Contains(snip.Id));
                 }
                 if(target==null)throw new InvalidOperationException("La cellule liée est introuvable. Utilisez Récupération > Réparer les liens dans le ruban.");
                 if(target.Worksheet.Visible!=ExcelInterop.XlSheetVisibility.xlSheetVisible)
@@ -168,6 +164,84 @@ namespace Doctracker.AddIn.UI
             }
             catch(Exception exception){ShowError(exception);}
         }
+        private async void ResizeSnip(string id,RectangleF zone)
+        {
+            if(context.IsBusy)return;
+            var snapshots=new List<ExcelCellGateway.CellSnapshot>();var events=application.EnableEvents;
+            SnipRecord snip=null;DocumentRecord doc=null;
+            try
+            {
+                EnsureProject();snip=context.State.Snips.FirstOrDefault(s=>s.Id==id);
+                doc=snip==null?null:context.State.Documents.FirstOrDefault(d=>d.Id==snip.DocumentId);
+                if(doc==null)return;
+                var targets=cells.LinkedCells(workbook).Where(cell=>cells.GetSnipIds(cell).Contains(id)).ToList();
+                foreach(var target in targets)ExcelCellGateway.ValidateWritable(target);
+                var preserve=snip.Type==SnipType.Validation || snip.Type==SnipType.Exception;
+                // A changed cell/formula is not silently overwritten by moving its proof.
+                if(!preserve && targets.Any(target=>CellChangedSinceSnip(target,snip)) &&
+                    MessageBox.Show(this,"La valeur ou la formule liée a été modifiée. La remplacer par la nouvelle extraction ?","Modifier le snip",MessageBoxButtons.YesNo)!=DialogResult.Yes)return;
+                BeginOperation();SetStatus(preserve?"Mise à jour de la zone…":"Lecture de la nouvelle zone…");
+                var raw=snip.RawText;
+                if(!preserve)
+                {
+                    var recognized=ExtractIndexedSelection(doc,snip.PageNumber,zone);
+                    if(recognized==null)
+                    {
+                        var path=canvas.CurrentPath;
+                        var page=await System.Threading.Tasks.Task.Run(()=>DocumentIndexer.ReadNativePage(path,snip.PageNumber));
+                        recognized=ExtractPageSelection(page,zone);
+                    }
+                    if(recognized==null)
+                    {
+                        SetStatus("Reconnaissance de la nouvelle zone…");
+                        using(var crop=canvas.CropRegion(zone))recognized=await System.Threading.Tasks.Task.Run(()=>ocr.Recognize(crop));
+                    }
+                    raw=recognized.Text;
+                }
+                operation.Token.ThrowIfCancellationRequested();EnsureActiveWorkbook();
+                foreach(var target in targets)snapshots.Add(cells.Snapshot(target));
+                application.EnableEvents=false;
+                context.Snips.UpdateGeometry(context.State,id,new NormalizedRectangle(zone.X,zone.Y,zone.Width,zone.Height),raw,Environment.UserName,updated=>{
+                    foreach(var target in targets)
+                    {
+                        if(preserve){cells.AttachProof(target,updated,doc,true);continue;}
+                        var linked=cells.GetSnipIds(target).Select(key=>context.State.Snips.FirstOrDefault(s=>s.Id==key)).Where(s=>s!=null).ToList();
+                        cells.WriteSnip(target,updated,doc,true);
+                        if(updated.Type==SnipType.Sum && linked.All(s=>s.Type==SnipType.Sum))
+                            target.Value2=(double)linked.Sum(s=>decimal.Parse(s.ExtractedValue,System.Globalization.CultureInfo.InvariantCulture));
+                    }
+                });
+                snapshots.Clear();SetStatus("Snip mis à jour · "+targets.Count+" cellule(s) actualisée(s).");
+            }
+            catch(OperationCanceledException){SetStatus("Modification du snip annulée.");}
+            catch(Exception failure)
+            {
+                var errors=new List<string>();foreach(var snapshot in snapshots)try{snapshot.Restore();}catch(Exception rollback){errors.Add(rollback.Message);}
+                ShowError(errors.Count==0?failure:new InvalidOperationException(failure.Message+" — Restauration Excel incomplète : "+string.Join(" ; ",errors)));
+            }
+            finally
+            {
+                application.EnableEvents=events;EndOperation();UpdateDocumentProofs();
+                if(snip!=null && doc!=null && canvas.CurrentPath!=null)canvas.NavigateTo(canvas.CurrentPath,snip);
+            }
+        }
+        private bool CellChangedSinceSnip(ExcelInterop.Range target,SnipRecord snip)
+        {
+            if(Equals(target.HasFormula,true))return true;
+            if(snip.Type==SnipType.Sum || snip.Type==SnipType.Number)
+            {
+                var expected=decimal.Parse(snip.ExtractedValue,System.Globalization.CultureInfo.InvariantCulture);
+                if(snip.Type==SnipType.Sum)
+                {
+                    var linked=cells.GetSnipIds(target).Select(id=>context.State.Snips.FirstOrDefault(s=>s.Id==id)).ToList();
+                    if(linked.Any(s=>s==null || s.Type!=SnipType.Sum))return true;
+                    expected=linked.Sum(s=>decimal.Parse(s.ExtractedValue,System.Globalization.CultureInfo.InvariantCulture));
+                }
+                return !decimal.TryParse(Convert.ToString(target.Value2,System.Globalization.CultureInfo.InvariantCulture),System.Globalization.NumberStyles.Any,System.Globalization.CultureInfo.InvariantCulture,out var actual) || actual!=expected;
+            }
+            return ExcelCellGateway.QueryText(target)!=snip.ExtractedValue;
+        }
+
         private void DeleteSnip(string id)
         {
             if(context.IsBusy)return;
@@ -179,14 +253,8 @@ namespace Doctracker.AddIn.UI
                 if(string.IsNullOrEmpty(id)||!context.State.Snips.Any(s=>s.Id==id))throw new InvalidOperationException("Sélectionnez une cellule liée ou faites un clic droit sur le snip du document.");
                 if(MessageBox.Show(this,"Supprimer ce snip et tous ses liens dans ce classeur ? Les valeurs et formules Excel seront conservées, y compris les totaux de sommes : vérifiez-les si nécessaire.","Supprimer le snip",MessageBoxButtons.YesNo,MessageBoxIcon.Question)!=DialogResult.Yes)return;
                 var targets=new List<ExcelInterop.Range>();
-                foreach(ExcelInterop.Worksheet sheet in workbook.Worksheets)
-                {
-                    ExcelInterop.Range comments;
-                    try {comments=sheet.Cells.SpecialCells(ExcelInterop.XlCellType.xlCellTypeComments);}
-                    catch(System.Runtime.InteropServices.COMException){continue;}
-                    foreach(ExcelInterop.Range cell in comments.Cells)
-                        if(cells.GetSnipIds(cell).Contains(id)){ExcelCellGateway.ValidateWritable(cell);targets.Add(cell);}
-                }
+                foreach(var cell in cells.LinkedCells(workbook))
+                    if(cells.GetSnipIds(cell).Contains(id)){ExcelCellGateway.ValidateWritable(cell);targets.Add(cell);}
                 foreach(var target in targets)snapshots.Add(cells.Snapshot(target));
                 application.EnableEvents=false;
                 foreach(var target in targets)cells.DetachProof(target,id,context.State);

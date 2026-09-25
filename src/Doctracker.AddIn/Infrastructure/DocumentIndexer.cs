@@ -18,10 +18,15 @@ namespace Doctracker.AddIn.Infrastructure
         private readonly IOcrEngine ocr;
         public DocumentIndexer(ProjectStore store, IOcrEngine ocr) { this.store = store; this.ocr = ocr; }
 
-        public void Index(ProjectState state, DocumentRecord document, Action<int, int> progress, CancellationToken cancellation, bool forceOcr = false)
+        public void Index(ProjectState state, DocumentRecord document, Action<int, int> progress, CancellationToken cancellation, bool forceOcr = false, bool allowOcr = true)
         {
             var path = store.ResolveDocumentPath(document);
             // Build separately: a failed/cancelled re-index must not erase the previous index.
+            List<PageTextRecord> oldPages;
+            try{oldPages=document.IndexedPages;}
+            catch(Exception failure) when(failure is InvalidOperationException || failure is System.Xml.XmlException || failure is IOException || failure is InvalidDataException)
+            {oldPages=new List<PageTextRecord>();}
+            var requiresOcr=false;
             var pages = new List<PageTextRecord>();
             if (string.Equals(Path.GetExtension(path), ".pdf", StringComparison.OrdinalIgnoreCase))
             {
@@ -31,11 +36,15 @@ namespace Doctracker.AddIn.Infrastructure
                     for (var index = 0; index < pdf.PageCount; index++)
                     {
                         cancellation.ThrowIfCancellationRequested();
+                        var cached = !document.IndexComplete && !forceOcr ? oldPages.FirstOrDefault(p=>p.PageNumber==index+1 && !string.IsNullOrWhiteSpace(p.Text)) : null;
+                        if(cached!=null){pages.Add(cached);progress?.Invoke(index+1,pdf.PageCount);continue;}
                         var native = pdf.GetPdfText(index);
                         PageTextRecord page;
                         if (!forceOcr && !string.IsNullOrWhiteSpace(native)) page = ReadNativePage(pdf, index, native);
+                        else if(!allowOcr) { page=new PageTextRecord();requiresOcr=true; }
                         else
                         {
+                            progress?.Invoke(index,pdf.PageCount);
                             var size = RenderSize(pdf.PageSizes[index]);
                             using (var rendered = pdf.Render(index, size.Width, size.Height, 144, 144, PdfRenderFlags.Annotations))
                             using (var bitmap = new Bitmap(rendered)) page = ocr.Recognize(bitmap);
@@ -54,6 +63,8 @@ namespace Doctracker.AddIn.Infrastructure
                     for (var index = 0; index < count; index++)
                     {
                         cancellation.ThrowIfCancellationRequested();
+                        if(!allowOcr){pages.Add(new PageTextRecord {PageNumber=index+1});requiresOcr=true;continue;}
+                        progress?.Invoke(index,count);
                         if (count > 1) original.SelectActiveFrame(FrameDimension.Page, index);
                         using (var bitmap = new Bitmap(original))
                         {
@@ -66,18 +77,14 @@ namespace Doctracker.AddIn.Infrastructure
                 }
             }
             cancellation.ThrowIfCancellationRequested();
-            List<PageTextRecord> oldPages;
-            try{oldPages=document.IndexedPages;}
-            catch(Exception failure) when(failure is InvalidOperationException || failure is System.Xml.XmlException || failure is IOException || failure is InvalidDataException)
-            {oldPages=new List<PageTextRecord>();}
             var oldCount = document.PageCount;
             var oldComplete = document.IndexComplete;
             var oldError = document.IndexError;
             document.IndexedPages = pages;
             document.PageCount = pages.Count;
-            document.IndexComplete = true;
+            document.IndexComplete = !requiresOcr;
             document.IndexError = "";
-            var entry = new AuditEventRecord { Actor = Environment.UserName, Action = "DocumentIndexed",
+            var entry = new AuditEventRecord { Actor = Environment.UserName, Action = requiresOcr ? "NativeTextPrepared" : "DocumentIndexed",
                 EntityType = "Document", EntityId = document.Id, Details = pages.Count + " page(s)" };
             state.AuditTrail.Add(entry);
             try { store.Save(state, createRecoveryCheckpoint: false); document.ReleaseIndex(); }
@@ -90,7 +97,7 @@ namespace Doctracker.AddIn.Infrastructure
             }
         }
 
-        public List<string> IndexMissing(ProjectState state, Action<string, int, int> progress, CancellationToken cancellation, IEnumerable<DocumentRecord> scope = null, bool retryFailed = true, bool forceReindex = false)
+        public List<string> IndexMissing(ProjectState state, Action<string, int, int> progress, CancellationToken cancellation, IEnumerable<DocumentRecord> scope = null, bool retryFailed = true, bool forceReindex = false, bool allowOcr = true)
         {
             var errors = new List<string>();
             var changed = false;
@@ -100,7 +107,7 @@ namespace Doctracker.AddIn.Infrastructure
                 if (!retryFailed && !string.IsNullOrEmpty(document.IndexError))
                 { errors.Add(document.OriginalName + " : " + document.IndexError); continue; }
                 if(!forceReindex && store.ValidateIndex(document))continue;
-                try { Index(state, document, (page, count) => progress?.Invoke(document.OriginalName, page, count), cancellation); }
+                try { Index(state, document, (page, count) => progress?.Invoke(document.OriginalName, page, count), cancellation, allowOcr: allowOcr); }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception exception)
                 {

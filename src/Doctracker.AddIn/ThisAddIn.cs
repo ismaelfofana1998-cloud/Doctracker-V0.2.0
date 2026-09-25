@@ -17,6 +17,7 @@ namespace Doctracker.AddIn
             Application.WorkbookAfterSave += Application_WorkbookAfterSave;
             Application.WorkbookBeforeSave += Application_WorkbookBeforeSave;
             Application.WorkbookBeforeClose += Application_WorkbookBeforeClose;
+            Application.SheetChange += Application_SheetChange;
             Application.SheetSelectionChange += Application_SheetSelectionChange;
             Application.SheetBeforeDoubleClick += Application_SheetBeforeDoubleClick;
         }
@@ -27,9 +28,16 @@ namespace Doctracker.AddIn
             Application.WorkbookAfterSave -= Application_WorkbookAfterSave;
             Application.WorkbookBeforeSave -= Application_WorkbookBeforeSave;
             Application.WorkbookBeforeClose -= Application_WorkbookBeforeClose;
+            Application.SheetChange -= Application_SheetChange;
             Application.SheetSelectionChange -= Application_SheetSelectionChange;
             Application.SheetBeforeDoubleClick -= Application_SheetBeforeDoubleClick;
             if (Controller != null) Controller.Dispose();
+        }
+
+        private void Application_SheetChange(object sheet, ExcelInterop.Range target)
+        {
+            try { Excel.ExcelProofLinks.Invalidate((ExcelInterop.Workbook)target.Worksheet.Parent); }
+            catch(System.Runtime.InteropServices.COMException) { }
         }
 
         private void Application_SheetSelectionChange(object sheet, ExcelInterop.Range target)

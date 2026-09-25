@@ -70,17 +70,10 @@ namespace Doctracker.AddIn.Excel
 
         public void AttachProof(ExcelInterop.Range target, SnipRecord snip, DocumentRecord document, bool append = true)
         {
-            var old = target.Comment == null ? "" : target.Comment.Text() ?? "";
-            // The entire Doctracker section is tagged; preserve pre-existing user notes.
-            var userNote = old.Split(new[] { "\n[DOCTRACKER]\n" }, StringSplitOptions.None)[0];
-            if (userNote.StartsWith(MarkerPrefix, StringComparison.Ordinal)) userNote = ""; // legacy metadata
             var ids = append ? GetSnipIds(target).Where(id => id != snip.Id).ToList() : new List<string>();
             ids.Add(snip.Id);
-            var text = userNote + "\n[DOCTRACKER]\n" + string.Join("\n", ids.Select(id => MarkerPrefix + id)) +
-                "\nDocument : " + document.DisplayName + "\nPage : " + snip.PageNumber + "\nType : " + snip.Type +
-                "\nStatut : " + snip.Status + "\nCommentaire : " + snip.Comment + "\nSélectionner la cellule pour afficher la preuve.";
-            if (target.Comment == null) target.AddComment(text); else target.Comment.Text(text);
-            target.Comment.Visible = false;
+            ExcelProofLinks.Set(target,ids);
+            RemoveLegacyNote(target);
             var color = UI.SnipTheme.Tint(snip.SourceType ?? snip.Type);
             target.Interior.Color = ColorTranslator.ToOle(color);
         }
@@ -88,11 +81,8 @@ namespace Doctracker.AddIn.Excel
         public void RemoveProof(ExcelInterop.Range target)
         {
             if (GetSnipIds(target).Count == 0) return;
-            var text = target.Comment.Text() ?? "";
-            var note = text.Split(new[] { "\n[DOCTRACKER]\n" }, StringSplitOptions.None)[0];
-            if (note.StartsWith(MarkerPrefix, StringComparison.Ordinal)) note = "";
-            target.Comment.Delete();
-            if (!string.IsNullOrEmpty(note)) target.AddComment(note);
+            ExcelProofLinks.Set(target,new string[0]);
+            RemoveLegacyNote(target);
             target.Interior.Pattern = ExcelInterop.XlPattern.xlPatternNone;
         }
 
@@ -100,8 +90,8 @@ namespace Doctracker.AddIn.Excel
         {
             var remaining=GetSnipIds(target).Where(value=>value!=id).ToList();
             if(remaining.Count==0){RemoveProof(target);return;}
-            var text=target.Comment.Text() ?? "";
-            target.Comment.Text(string.Join("\n",Regex.Split(text,@"\r?\n").Where(line=>line.Trim()!=MarkerPrefix+id)));
+            ExcelProofLinks.Set(target,remaining);
+            RemoveLegacyNote(target);
             var last=state.Snips.LastOrDefault(s=>remaining.Contains(s.Id));
             var document=last==null?null:state.Documents.FirstOrDefault(d=>d.Id==last.DocumentId);
             if(document!=null)AttachProof(target,last,document,true);
@@ -109,10 +99,39 @@ namespace Doctracker.AddIn.Excel
 
         public IReadOnlyList<string> GetSnipIds(ExcelInterop.Range target)
         {
-            if (target == null || target.Cells.CountLarge != 1 || target.Comment == null) return new List<string>();
-            var text = target.Comment.Text() ?? "";
-            return Regex.Split(text, @"\r?\n").Where(line => line.StartsWith(MarkerPrefix, StringComparison.Ordinal))
-                .Select(line => line.Substring(MarkerPrefix.Length).Trim()).Where(id => id.Length > 0).Distinct().ToList();
+            if (target == null || target.Cells.CountLarge != 1) return new List<string>();
+            return ExcelProofLinks.Get(target).Concat(LegacyIds(target)).Distinct().ToList();
+        }
+        private static IEnumerable<string> LegacyIds(ExcelInterop.Range target)
+        {
+            var text=target.Comment==null?"":target.Comment.Text()??"";
+            return Regex.Split(text,@"\r?\n").Where(line=>line.StartsWith(MarkerPrefix,StringComparison.Ordinal))
+                .Select(line=>line.Substring(MarkerPrefix.Length).Trim()).Where(id=>id.Length>0);
+        }
+        private static void RemoveLegacyNote(ExcelInterop.Range target)
+        {
+            if(target.Comment==null || !LegacyIds(target).Any())return;
+            var text=target.Comment.Text()??"";
+            var note=text.Split(new[]{"\n[DOCTRACKER]\n"},StringSplitOptions.None)[0];
+            if(note.StartsWith(MarkerPrefix,StringComparison.Ordinal))note="";
+            target.Comment.Delete(); if(!string.IsNullOrEmpty(note))target.AddComment(note);
+        }
+        public List<ExcelInterop.Range> LinkedCells(ExcelInterop.Workbook book) => ExcelProofLinks.Cells(book);
+        public void MigrateLegacyNotes(ExcelInterop.Workbook book)
+        {
+            foreach(ExcelInterop.Worksheet sheet in book.Worksheets)
+            {
+                ExcelInterop.Range comments;
+                try{comments=sheet.Cells.SpecialCells(ExcelInterop.XlCellType.xlCellTypeComments);}
+                catch(System.Runtime.InteropServices.COMException){continue;}
+                // Collect first: deleting a note must not change the range being enumerated.
+                var targets=new List<ExcelInterop.Range>();foreach(ExcelInterop.Range cell in comments.Cells)if(LegacyIds(cell).Any())targets.Add(cell);
+                foreach(var cell in targets)
+                {
+                    ExcelProofLinks.Set(cell,GetSnipIds(cell));
+                    if(!sheet.ProtectContents)RemoveLegacyNote(cell);
+                }
+            }
         }
         public string GetSnipId(ExcelInterop.Range target) => GetSnipIds(target).LastOrDefault();
 
@@ -139,9 +158,11 @@ namespace Doctracker.AddIn.Excel
             private readonly object formula, value, format, color, pattern;
             private readonly bool hasFormula;
             private readonly string note;
+            private readonly IReadOnlyList<string> proofIds;
             public CellSnapshot(ExcelInterop.Range target)
             {
                 this.target = target;
+                proofIds = ExcelProofLinks.Get(target).ToList();
                 hasFormula = Equals(target.HasFormula, true);
                 formula = target.Formula; value = target.Value2; format = target.NumberFormat;
                 color = target.Interior.Color; pattern = target.Interior.Pattern;
@@ -154,6 +175,7 @@ namespace Doctracker.AddIn.Excel
                 target.Interior.Color = color; target.Interior.Pattern = pattern;
                 if (target.Comment != null) target.Comment.Delete();
                 if (note != null) target.AddComment(note);
+                ExcelProofLinks.Set(target,proofIds);
             }
         }
     }

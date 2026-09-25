@@ -24,7 +24,7 @@ namespace Doctracker.AddIn.Infrastructure
         public DocumentImporter Importer { get; private set; }
         public SnipService Snips { get; private set; }
         public DocumentMatcher Matcher { get; private set; }
-        public static string CacheRoot => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Doctracker","Recovery");
+        public static string CacheRoot => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Doctracker","Cache");
         private static bool Supported(ExcelInterop.Workbook book) => new[]{".xlsx",".xlsm",".xlsb"}.Contains(Path.GetExtension(book.Name).ToLowerInvariant());
         public void Ensure(ExcelInterop.Workbook book)
         {
@@ -44,11 +44,13 @@ namespace Doctracker.AddIn.Infrastructure
             }
             Bind(store,state);currentWorkbookPath=book.FullName;
             if (dirty) Store.Save(State);
+            if(State.Snips.Count>0)new Excel.ExcelCellGateway(book.Application).MigrateLegacyNotes(book);
             MarkWorkbookDirty();
         }
         private void Bind(ProjectStore store,ProjectState state)
         {
             Store=store;State=state;Store.SharedVaultPath=state.SharedVaultPath;
+            Store.DeferMetadataWrites=true;
             Store.Saved+=()=>dirty=true;
             Importer=new DocumentImporter(store);Snips=new SnipService(store,new TextValueParser());Matcher=new DocumentMatcher();
         }
@@ -60,6 +62,7 @@ namespace Doctracker.AddIn.Infrastructure
             if((workbook.ReadOnly&&!saveAs)||!Supported(workbook))throw new InvalidOperationException("Enregistrez une copie modifiable au format .xlsx, .xlsm ou .xlsb.");
             CaptureCellLinks();
             if(!dirty)return;
+            Store.Flush(State);
             if(!string.IsNullOrEmpty(State.SharedVaultPath)) SharedVault.Publish(State.SharedVaultPath,Store,State);
             portable.Save(Store,State);
             dirty=false;
@@ -69,16 +72,11 @@ namespace Doctracker.AddIn.Infrastructure
             if (State.Snips.Count == 0 && State.CellLinks.Count == 0) return;
             var links=new List<CellLinkRecord>();var known=new HashSet<string>(State.Snips.Select(s=>s.Id));
             var cells=new Excel.ExcelCellGateway(workbook.Application);
-            foreach(ExcelInterop.Worksheet sheet in workbook.Worksheets)
+            Excel.ExcelProofLinks.Invalidate(workbook);
+            foreach(var cell in cells.LinkedCells(workbook))
             {
-                ExcelInterop.Range comments;
-                try{comments=sheet.Cells.SpecialCells(ExcelInterop.XlCellType.xlCellTypeComments);}
-                catch(System.Runtime.InteropServices.COMException){continue;}
-                foreach(ExcelInterop.Range cell in comments.Cells)
-                {
-                    var ids=cells.GetSnipIds(cell).Where(known.Contains).ToList();if(ids.Count==0)continue;
-                    links.Add(new CellLinkRecord {WorksheetName=sheet.Name,CellAddress=cell.Address[false,false,ExcelInterop.XlReferenceStyle.xlA1],SnipIds=ids});
-                }
+                var ids=cells.GetSnipIds(cell).Where(known.Contains).ToList();if(ids.Count==0)continue;
+                links.Add(new CellLinkRecord {WorksheetName=cell.Worksheet.Name,CellAddress=cell.Address[false,false,ExcelInterop.XlReferenceStyle.xlA1],SnipIds=ids});
             }
             Func<CellLinkRecord,string> key=x=>x.WorksheetName+"!"+x.CellAddress+"|"+string.Join(",",x.SnipIds);
             if(!links.Select(key).OrderBy(x=>x).SequenceEqual(State.CellLinks.Select(key).OrderBy(x=>x)))

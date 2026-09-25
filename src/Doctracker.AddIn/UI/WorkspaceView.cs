@@ -15,6 +15,7 @@ namespace Doctracker.AddIn.UI
         public readonly ListBox Results = new ListBox { Dock = DockStyle.Fill, BorderStyle = BorderStyle.None, IntegralHeight = false, DisplayMember = "Caption", HorizontalScrollbar = true, AccessibleName = "Résultats de recherche" };
         public readonly ComboBox Proofs = new EvidenceComboBox { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList, DisplayMember = "Caption", FlatStyle = FlatStyle.Flat, AccessibleName = "Preuves de la cellule" };
         public readonly Label Brand = Label("Doctracker");
+        private readonly ProgressBar progress = new ProgressBar {Height=4,Dock=DockStyle.Fill,Style=ProgressBarStyle.Marquee,MarqueeAnimationSpeed=30,Visible=false};
         public readonly Label Status = Label("Prêt");
         public readonly Button Search = SnipTheme.Button("Rechercher", "SearchDocuments");
         public readonly Button DeleteSnip = SnipTheme.Button("", "Delete", Color.Red);
@@ -67,6 +68,7 @@ namespace Doctracker.AddIn.UI
             proofPanel=Row(0,100);proofPanel.ColumnStyles[0]=new ColumnStyle(SizeType.AutoSize);proofPanel.Padding=new Padding(10,5,10,5);proofPanel.Visible=false;
             proofPanel.Controls.Add(Label("Preuve"),0,0);proofPanel.Controls.Add(Proofs,1,0);proofPanel.ColumnCount=3;proofPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));proofPanel.Controls.Add(DeleteSnip,2,0);Add(root,proofPanel);
             Add(root,Canvas,SizeType.Percent,100);
+            Add(root,progress);
             var footer=Row(100,0);footer.ColumnStyles[1]=new ColumnStyle(SizeType.AutoSize);footer.BackColor=SnipTheme.Surface;
             Status.AutoSize=false;Status.AutoEllipsis=true;Status.Padding=new Padding(8,2,8,2);Status.Height=Font.Height+8;
             Status.FontChanged+=(s,e)=>Status.Height=Status.Font.Height+8;
@@ -99,11 +101,11 @@ namespace Doctracker.AddIn.UI
         }
         public void SetDocumentSummary(int total, int indexed) => tips.SetToolTip(Documents,
             "Document actif · " + total + " pièce(s), " + indexed + " indexée(s). Texte préparé à la première recherche.");
-        public void ShowResults(int count) { resultTotal=count;resultCount.Text=count==0 ? "Aucun résultat · Vérifiez le dossier ou réindexez le document." : count+" résultat(s)";SizeResults();resultsPanel.Visible=true; }
+        public void ShowResults(int count) { resultTotal=count;resultCount.Text=count==0 ? "Aucun résultat · Vérifiez le dossier et le texte recherché." : count+" résultat(s)";SizeResults();resultsPanel.Visible=true; }
         private void SizeResults() { Results.Visible=resultTotal>0;resultsPanel.RowStyles[1].Height=resultTotal==0 ? 0 : Math.Min(3,resultTotal)*Results.ItemHeight+8; resultCount.MaximumSize=new Size(Math.Max(100,Width-120),0); }
         public void HideResults() { resultsPanel.Visible=false; }
         public void ShowProofs(bool visible) { proofPanel.Visible=visible; }
-        public void SetBusy(bool busy) { Documents.Enabled=Query.Enabled=Search.Enabled=Proofs.Enabled=Categories.Enabled=DeleteSnip.Enabled=!busy;Cancel.Visible=busy; }
+        public void SetBusy(bool busy) { progress.Visible=busy; Documents.Enabled=Query.Enabled=Search.Enabled=Proofs.Enabled=Categories.Enabled=DeleteSnip.Enabled=!busy;Cancel.Visible=busy; }
         private static Label Label(string text) => new Label {Text=text,AutoSize=true,Dock=DockStyle.Fill,ForeColor=SnipTheme.Muted,Margin=Padding.Empty,Padding=new Padding(0,3,0,3)};
         private static TableLayoutPanel Rows()
         {

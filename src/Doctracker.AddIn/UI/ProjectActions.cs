@@ -182,15 +182,7 @@ namespace Doctracker.AddIn.UI
                         CrossReferences.Reassign(context.State,doc,reference.Text,(int)list.SelectedItem);
                         if(common.Checked)context.State.TestReference=reference.Text.Trim();
                         application.EnableEvents=false;
-                        foreach(ExcelInterop.Worksheet sheet in workbook.Worksheets)
-                        {
-                            ExcelInterop.Range linked;try{linked=sheet.Cells.SpecialCells(ExcelInterop.XlCellType.xlCellTypeComments);}catch(System.Runtime.InteropServices.COMException){continue;}
-                            foreach(ExcelInterop.Range cell in linked.Cells)
-                            {
-                                var ids=cells.GetSnipIds(cell);var snip=context.State.Snips.LastOrDefault(p=>p.DocumentId==doc.Id && ids.Contains(p.Id));if(snip==null)continue;
-                                Excel.ExcelCellGateway.ValidateWritable(cell);snapshots.Add(cells.Snapshot(cell));cells.AttachProof(cell,snip,doc);
-                            }
-                        }
+                        // Xref is drawn from document metadata; no cell note needs rewriting.
                         context.Store.Save(context.State);
                     }
                     catch(Exception failure)

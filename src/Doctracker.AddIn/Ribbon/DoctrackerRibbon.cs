@@ -26,7 +26,7 @@ namespace Doctracker.AddIn.Ribbon
             <button id='ImportFolder' label='Importer un dossier…' onAction='Command_OnAction'/>
             <button id='Categorize' label='Classer les documents…' onAction='Command_OnAction'/>
             <button id='TestReference' label='Référence du test…' onAction='Command_OnAction'/>
-            <button id='Reindex' label='Réindexer tous les documents' onAction='Command_OnAction'/>
+            <button id='Reindex' label='Reconnaître le dossier sélectionné' onAction='Command_OnAction'/>
             <button id='ReindexOcr' label='Réindexer le document actif par OCR' onAction='Command_OnAction'/>
             <button id='Remove' label='Retirer le document actif' onAction='Command_OnAction'/>
           </menu>
@@ -34,15 +34,15 @@ namespace Doctracker.AddIn.Ribbon
             <button id='Backup' label='Sauvegarder les pièces et liens…' onAction='Command_OnAction'/>
             <button id='Restore' label='Restaurer une sauvegarde…' onAction='Command_OnAction'/>
             <button id='RepairLinks' label='Réparer les liens' onAction='Command_OnAction'/>
-            <button id='RecoveryFolder' label='Sauvegardes automatiques' onAction='Command_OnAction'/>
+            <button id='RecoveryFolder' label='Afficher le cache local' onAction='Command_OnAction'/>
             <button id='SharedStorage' label='Stockage autonome / partagé…' onAction='Command_OnAction'/>
           </menu>
           <button id='SearchDocuments'  getImage='GetImage' label='Rechercher la cellule' onAction='Search_OnAction'/>
         </group>
         <group id='SnipGroup' label='Snips'>
+          <toggleButton id='TextSnip' getImage='GetImage' label='Texte' onAction='TextSnip_OnAction' getPressed='TextSnip_GetPressed' size='large'/>
           <toggleButton id='ValidationSnip' getImage='GetImage' label='Validation' onAction='ValidationSnip_OnAction' getPressed='ValidationSnip_GetPressed' size='large'/>
           <toggleButton id='ExceptionSnip' getImage='GetImage' label='Exception' onAction='ExceptionSnip_OnAction' getPressed='ExceptionSnip_GetPressed' size='large'/>
-          <toggleButton id='TextSnip' getImage='GetImage' label='Texte' onAction='TextSnip_OnAction' getPressed='TextSnip_GetPressed' size='large'/>
           <toggleButton id='NumberSnip' getImage='GetImage' label='Nombre' onAction='NumberSnip_OnAction' getPressed='NumberSnip_GetPressed' size='large'/>
           <toggleButton id='DateSnip' getImage='GetImage' label='Date' onAction='DateSnip_OnAction' getPressed='DateSnip_GetPressed' size='large'/>
           <toggleButton id='SumSnip' getImage='GetImage' label='Somme' onAction='SumSnip_OnAction' getPressed='SumSnip_GetPressed' size='large'/>

@@ -92,6 +92,26 @@ namespace Doctracker.Core.Services
             catch { state.Snips.Insert(position, snip); state.CellLinks = previousLinks; state.AuditTrail.Remove(entry); throw; }
         }
 
+        public void UpdateGeometry(ProjectState state,string id,NormalizedRectangle rectangle,string rawText,string actor,Action<SnipRecord> applyCells=null)
+        {
+            var snip=state.Snips.FirstOrDefault(s=>s.Id==id) ?? throw new InvalidOperationException("Snip introuvable.");
+            var value=parser.Parse(snip.Type,rawText);
+            var oldRectangle=new NormalizedRectangle(snip.X,snip.Y,snip.Width,snip.Height);
+            var oldText=snip.RawText;var oldValue=snip.ExtractedValue;var oldStatus=snip.Status;
+            var oldReviewer=snip.ReviewedBy;var oldReviewDate=snip.ReviewedAtUtc;
+            var entry=new AuditEventRecord {Actor=actor??"",Action="SnipResized",EntityType="Snip",EntityId=id};
+            snip.X=rectangle.X;snip.Y=rectangle.Y;snip.Width=rectangle.Width;snip.Height=rectangle.Height;
+            snip.RawText=rawText;snip.ExtractedValue=value;snip.Status=ReviewStatus.Prepared;snip.ReviewedBy="";snip.ReviewedAtUtc=null;
+            state.AuditTrail.Add(entry);
+            try{applyCells?.Invoke(snip);store.Save(state);}
+            catch
+            {
+                snip.X=oldRectangle.X;snip.Y=oldRectangle.Y;snip.Width=oldRectangle.Width;snip.Height=oldRectangle.Height;
+                snip.RawText=oldText;snip.ExtractedValue=oldValue;snip.Status=oldStatus;snip.ReviewedBy=oldReviewer;snip.ReviewedAtUtc=oldReviewDate;
+                state.AuditTrail.Remove(entry);throw;
+            }
+        }
+
         public void SetReview(
             ProjectState state,
             string snipId,

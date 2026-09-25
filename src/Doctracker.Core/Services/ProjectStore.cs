@@ -19,6 +19,7 @@ namespace Doctracker.Core.Services
         private readonly System.Collections.Concurrent.ConcurrentDictionary<string,string> validatedIndexes = new System.Collections.Concurrent.ConcurrentDictionary<string,string>();
         private static readonly XmlSerializer indexSerializer = new XmlSerializer(typeof(List<PageTextRecord>));
         public event Action Saved;
+        public bool DeferMetadataWrites { get; set; }
         public Action<DocumentRecord> DocumentResolver { get; set; }
         public Action<string> IndexResolver { get; set; }
         public string RecoveryNotice { get; private set; }
@@ -83,7 +84,9 @@ namespace Doctracker.Core.Services
                 return state;
             }
         }
-        public void Save(ProjectState state, bool createRecoveryCheckpoint = true)
+        public void Save(ProjectState state, bool createRecoveryCheckpoint = true) => SaveCore(state,createRecoveryCheckpoint,false);
+        public void Flush(ProjectState state) => SaveCore(state,false,true);
+        private void SaveCore(ProjectState state, bool createRecoveryCheckpoint, bool forceMetadata)
         {
             if (state == null) throw new ArgumentNullException(nameof(state));
             lock (sync)
@@ -106,7 +109,7 @@ namespace Doctracker.Core.Services
                         document.IndexKey = key;
                     }
                     state.UpdatedAtUtc = DateTime.UtcNow; state.Revision = Guid.NewGuid().ToString("N");
-                    AtomicWrite(MetadataPath, MetadataBytes(state));
+                    if(!DeferMetadataWrites || forceMetadata)AtomicWrite(MetadataPath, MetadataBytes(state));
                 }
                 catch
                 {
@@ -129,7 +132,7 @@ namespace Doctracker.Core.Services
                 var recovery = Path.Combine(ProjectDirectory, "recovery");
                 try
                 {
-                    if (createRecoveryCheckpoint)
+                    if (createRecoveryCheckpoint && !DeferMetadataWrites)
                     {
                         Directory.CreateDirectory(recovery);
                         File.Copy(MetadataPath, Path.Combine(recovery, DateTime.UtcNow.ToString("yyyyMMddHHmmssfffffff") + "-" + state.Revision + ".xml"));

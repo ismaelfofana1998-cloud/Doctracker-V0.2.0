@@ -54,6 +54,7 @@ try {
     $canvas.NavigateTo($imagePath, $snip)
     if (![object]::ReferenceEquals($beforeImage, $picture.Image)) { throw 'Selecting a proof rerendered the same page.' }
     if ([Math]::Abs($type.GetField('zoom', $flags).GetValue($canvas) - 1.25) -gt .001) { throw 'Selecting a proof reset the zoom.' }
+    if($canvas.ActiveType -ne [Doctracker.Core.Models.SnipType]::Text){throw 'Text snip is not the default.'}
     Write-Host 'PASS: canvas loading, scaled display, normalized crop, proof navigation and retained zoom'
 
     $previewDirectory = Join-Path $PSScriptRoot '../../artifacts/ui-previews'
@@ -255,7 +256,7 @@ try {
     if($document.IndexComplete -or $document.IndexKey -ne '' -or $nativePage.Text -notmatch 'FA-001' -or $nativePage.Words.Count -eq 0){throw 'First snip cannot use native PDF text before indexing.'}
 
     $recoveryCount=@(Get-ChildItem (Join-Path $store.ProjectDirectory 'recovery') -Filter *.xml).Count
-    $indexer.Index($state, $document, $null, [Threading.CancellationToken]::None, $false)
+    $indexer.Index($state, $document, $null, [Threading.CancellationToken]::None, $false, $true)
     if(@(Get-ChildItem (Join-Path $store.ProjectDirectory 'recovery') -Filter *.xml).Count -ne $recoveryCount){throw 'Indexing created redundant recovery snapshots.'}
     if (!$document.IndexComplete -or $document.IndexedPages[0].Text -notmatch 'FA-001') { throw 'Native PDF index failed.' }
     $matcher = New-Object Doctracker.Core.Services.DocumentMatcher
@@ -271,7 +272,7 @@ try {
     $freshStore=New-Object Doctracker.Core.Services.ProjectStore $store.ProjectDirectory
     $freshState=$freshStore.LoadOrCreate('')
     $freshIndexer=$constructor.Invoke([object[]]@($freshStore.PSObject.BaseObject,$ocr.PSObject.BaseObject))
-    $indexErrors=$freshIndexer.IndexMissing($freshState,$null,[Threading.CancellationToken]::None,$null,$true,$false)
+    $indexErrors=$freshIndexer.IndexMissing($freshState,$null,[Threading.CancellationToken]::None,$null,$true,$false,$true)
     if($indexErrors.Count -ne 0 -or !$freshState.Documents[0].IndexComplete) { throw 'Damaged index did not rebuild from its source.' }
     $occurrences=[Doctracker.Core.Services.OccurrenceSearch]::Find($freshState,'001',10,[Threading.CancellationToken]::None)
     if($occurrences.Count -lt 1) { throw 'Search after automatic index recovery failed.' }
@@ -282,16 +283,24 @@ try {
     $revisionBefore=$freshState.Revision
     $activeScope=[Collections.Generic.List[Doctracker.Core.Models.DocumentRecord]]::new()
     $activeScope.Add($freshState.Documents[0])
-    $scopeErrors=$freshIndexer.IndexMissing($freshState,$null,[Threading.CancellationToken]::None,$activeScope,$false,$false)
+    $scopeErrors=$freshIndexer.IndexMissing($freshState,$null,[Threading.CancellationToken]::None,$activeScope,$false,$false,$true)
     if($scopeErrors.Count -ne 0){throw 'Out-of-scope failed document blocked active folder.'}
-    $knownErrors=$freshIndexer.IndexMissing($freshState,$null,[Threading.CancellationToken]::None,$null,$false,$false)
+    $knownErrors=$freshIndexer.IndexMissing($freshState,$null,[Threading.CancellationToken]::None,$null,$false,$false,$true)
     if($knownErrors.Count -ne 1 -or $freshState.Revision -ne $revisionBefore){throw 'Known failed document was retried or caused an unnecessary save.'}
     # Cancellation before forced reindexing preserves the existing usable index.
-    try { $freshIndexer.IndexMissing($freshState,$null,[Threading.CancellationToken]::new($true),$activeScope,$true,$true);throw 'Cancellation ignored' }
+    try { $freshIndexer.IndexMissing($freshState,$null,[Threading.CancellationToken]::new($true),$activeScope,$true,$true,$true);throw 'Cancellation ignored' }
     catch { if($_.Exception.ToString() -notmatch 'OperationCanceledException'){throw} }
     if(!$freshState.Documents[0].IndexComplete){throw 'Cancelled reindex invalidated previous index.'}
     Write-Host 'PASS: folder-scoped indexing, no repeated failed imports, cancellation preserves previous index'
     Write-Host 'PASS: damaged XML/GZip index rebuilt; occurrence search works after reopening'
+    # Native text preparation never runs OCR; scanned images remain pending until allowed.
+    $scanState=New-Object Doctracker.Core.Models.ProjectState
+    $scanDoc=$importer.Import($scanState,$imagePath,'ocr-demand')
+    $indexer.Index($scanState,$scanDoc,$null,[Threading.CancellationToken]::None,$false,$false)
+    if($scanDoc.IndexComplete -or $scanDoc.IndexedPages[0].Text -ne ''){throw 'A scan was recognized without OCR authorization.'}
+    $indexer.Index($scanState,$scanDoc,$null,[Threading.CancellationToken]::None,$false,$true)
+    if(!$scanDoc.IndexComplete -or $scanDoc.IndexedPages[0].Text -notmatch '12345'){throw 'On-demand OCR did not complete.'}
+    Write-Host 'PASS: scanned image remains pending until explicit OCR, then becomes searchable'
     Write-Host 'PASS: PDFium deployment, landscape rendering, native PDF text and positional matching'
     # Windows PowerShell does not apply the add-in's .dll.config redirects.
     # Exercise export in a tiny host with the deployed configuration, in each architecture.
@@ -318,6 +327,46 @@ try {
     $picture.Image.Save((Join-Path $previewDirectory 'annotated-export.png'))
     Write-Host 'PASS: flattened PDF export with colored snips and Xref, reopened in PDFium'
 
+    # Thirty-page native PDF: scroll to arbitrary pages with a bounded bitmap cache.
+    $pageTotal=30; $fontId=3+2*$pageTotal
+    $multiObjects=[Collections.Generic.List[string]]::new()
+    $multiObjects.Add('<< /Type /Catalog /Pages 2 0 R >>')
+    $kids=(0..($pageTotal-1) | ForEach-Object {"$(3+2*$_) 0 R"}) -join ' '
+    $multiObjects.Add("<< /Type /Pages /Kids [$kids] /Count $pageTotal >>")
+    for($i=0;$i -lt $pageTotal;$i++) {
+        $contentId=4+2*$i
+        $multiObjects.Add("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 900] /Resources << /Font << /F1 $fontId 0 R >> >> /Contents $contentId 0 R >>")
+        $content="BT /F1 24 Tf 60 820 Td (PAGE $($i+1)) Tj ET"
+        $multiObjects.Add("<< /Length $($content.Length) >>`nstream`n$content`nendstream")
+    }
+    $multiObjects.Add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>')
+    $multiText="%PDF-1.4`n"; $multiOffsets=[Collections.Generic.List[int]]::new()
+    for($i=0;$i -lt $multiObjects.Count;$i++){$multiOffsets.Add($multiText.Length);$multiText+="$($i+1) 0 obj`n$($multiObjects[$i])`nendobj`n"}
+    $multiXref=$multiText.Length;$multiText+="xref`n0 $($multiObjects.Count+1)`n0000000000 65535 f `n"
+    foreach($offset in $multiOffsets){$multiText+=('{0:D10} 00000 n ' -f $offset)+"`n"}
+    $multiText+="trailer`n<< /Size $($multiObjects.Count+1) /Root 1 0 R >>`nstartxref`n$multiXref`n%%EOF"
+    $multiPath=Join-Path $temp 'continuous.pdf';[IO.File]::WriteAllText($multiPath,$multiText,[Text.Encoding]::ASCII)
+    $canvas.LoadDocument($multiPath);$canvas.GoToPage(15)
+    if($canvas.CurrentPageNumber -ne 15){throw 'Direct page navigation failed.'}
+    $viewport=$type.GetField('viewport',$flags).GetValue($canvas)
+    $bounds=$type.GetField('pageBounds',$flags).GetValue($canvas)
+    $viewport.AutoScrollPosition=[Drawing.Point]::new(0,$bounds[20].Top)
+    $type.GetMethod('RefreshVisiblePages',$flags).Invoke($canvas,@()) | Out-Null
+    if($canvas.CurrentPageNumber -ne 21){throw 'Vertical scrolling did not activate page 21.'}
+    $surfaces=$type.GetField('pagePictures',$flags).GetValue($canvas)
+    if($surfaces.Count -gt 3){throw 'Continuous viewer retained too many rendered pages.'}
+    # Drag an existing snip and cancel it; no new snip is created.
+    $editable=New-Object Doctracker.Core.Models.SnipRecord
+    $editable.PageNumber=21;$editable.X=.2;$editable.Y=.2;$editable.Width=.3;$editable.Height=.15
+    $proofList=[Collections.Generic.List[Doctracker.Core.Models.SnipRecord]]::new();$proofList.Add($editable)
+    $canvas.SetProofs($proofList);$canvas.NavigateTo($multiPath,$editable)
+    $surface=$type.GetField('picture',$flags).GetValue($canvas)
+    $down=[Windows.Forms.MouseEventArgs]::new([Windows.Forms.MouseButtons]::Left,1,[int]($surface.Width*.3),[int]($surface.Height*.25),0)
+    $type.GetMethod('Picture_MouseDown',$flags).Invoke($canvas,[object[]]@($surface,$down)) | Out-Null
+    if(!$type.GetField('proofDragging',$flags).GetValue($canvas)){throw 'Existing snip did not enter graphical edit mode.'}
+    $type.GetMethod('CancelCommentDrag',$flags).Invoke($canvas,@()) | Out-Null
+    if($type.GetField('proofDragging',$flags).GetValue($canvas) -or [Math]::Abs($canvas.GetNormalizedSelection().X-.2) -gt .001){throw 'Escape did not restore snip geometry.'}
+    Write-Host 'PASS: continuous vertical scrolling, direct page number, bounded rendering cache, snip geometry edit/cancel'
 } finally {
     if ($canvas) { $canvas.Dispose() }
     if ($ocr) { $ocr.Dispose() }
