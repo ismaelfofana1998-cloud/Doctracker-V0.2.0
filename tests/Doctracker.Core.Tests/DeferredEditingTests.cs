@@ -22,6 +22,14 @@ namespace Doctracker.Core.Tests
             state.TestReference="Non enregistré";store.Save(state);
             Assert.Equal("TEST 24",new ProjectStore(root).LoadOrCreate("").TestReference);
         }
+        [Fact] public void Deferred_import_publishes_one_change_at_end_of_batch()
+        {
+            var store=new ProjectStore(root){DeferMetadataWrites=true};var state=new ProjectState();var changes=0;store.Saved+=()=>changes++;
+            var result=DocumentImportBatch.Run(store,state,Enumerable.Range(0,100).Select(i=>i.ToString()),path=>{
+                var doc=new DocumentRecord {OriginalName=path};state.Documents.Add(doc);return doc;
+            },null,System.Threading.CancellationToken.None);
+            Assert.Equal(100,result.ImportedCount);Assert.Equal(1,changes);Assert.False(File.Exists(store.MetadataPath));
+        }
         [Fact] public void Deferred_indexes_are_reusable_without_rewriting_the_project()
         {
             var store=new ProjectStore(root){DeferMetadataWrites=true};var state=new ProjectState();

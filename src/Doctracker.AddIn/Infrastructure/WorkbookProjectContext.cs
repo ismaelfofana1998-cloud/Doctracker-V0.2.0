@@ -15,6 +15,7 @@ namespace Doctracker.AddIn.Infrastructure
         private ExcelWorkbookParts parts;
         private PortableProject portable;
         private volatile bool dirty;
+        private readonly List<string> sessionCaches=new List<string>();
         private bool busy;
         public event Action<bool> BusyChanged;
         public bool IsBusy { get => busy; set { if (busy == value) return; busy = value; BusyChanged?.Invoke(value); } }
@@ -51,6 +52,7 @@ namespace Doctracker.AddIn.Infrastructure
         {
             Store=store;State=state;Store.SharedVaultPath=state.SharedVaultPath;
             Store.DeferMetadataWrites=true;
+            if(store.ProjectDirectory.StartsWith(CacheRoot+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase) && !sessionCaches.Contains(store.ProjectDirectory))sessionCaches.Add(store.ProjectDirectory);
             Store.Saved+=()=>dirty=true;
             Importer=new DocumentImporter(store);Snips=new SnipService(store,new TextValueParser());Matcher=new DocumentMatcher();
         }
@@ -111,6 +113,12 @@ namespace Doctracker.AddIn.Infrastructure
             foreach(var file in Directory.GetFiles(source))File.Copy(file,Path.Combine(destination,Path.GetFileName(file)),false);
             foreach(var dir in Directory.GetDirectories(source))if((File.GetAttributes(dir)&FileAttributes.ReparsePoint)==0)CopyDirectory(dir,Path.Combine(destination,Path.GetFileName(dir)));
         }
-        public void Dispose(){parts?.Dispose();}
+        public void Dispose()
+        {
+            parts?.Dispose();
+            foreach(var directory in sessionCaches)
+                try{if(Directory.Exists(directory))Directory.Delete(directory,true);}
+                catch(Exception failure) when(failure is IOException || failure is UnauthorizedAccessException){System.Diagnostics.Trace.WriteLine("Doctracker cache cleanup: "+failure.Message);}
+        }
     }
 }

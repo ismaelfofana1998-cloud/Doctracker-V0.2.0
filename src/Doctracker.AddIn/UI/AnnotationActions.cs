@@ -237,7 +237,8 @@ namespace Doctracker.AddIn.UI
                     if(linked.Any(s=>s==null || s.Type!=SnipType.Sum))return true;
                     expected=linked.Sum(s=>decimal.Parse(s.ExtractedValue,System.Globalization.CultureInfo.InvariantCulture));
                 }
-                return !decimal.TryParse(Convert.ToString(target.Value2,System.Globalization.CultureInfo.InvariantCulture),System.Globalization.NumberStyles.Any,System.Globalization.CultureInfo.InvariantCulture,out var actual) || actual!=expected;
+                decimal actual;
+                return !decimal.TryParse(Convert.ToString(target.Value2,System.Globalization.CultureInfo.InvariantCulture),System.Globalization.NumberStyles.Any,System.Globalization.CultureInfo.InvariantCulture,out actual) || actual!=expected;
             }
             return ExcelCellGateway.QueryText(target)!=snip.ExtractedValue;
         }

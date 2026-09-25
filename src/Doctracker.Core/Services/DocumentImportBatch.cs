@@ -44,7 +44,7 @@ namespace Doctracker.Core.Services
                     catch (OperationCanceledException) { throw; }
                     catch (Exception failure) { result.Errors.Add(Path.GetFileName(path) + " : " + failure.Message); }
                     // A failed file must never trigger an extra checkpoint.
-                    if (pending >= 25) flush();
+                    if (pending >= 25 && !store.DeferMetadataWrites) flush();
                 }
             }
             catch (OperationCanceledException) { result.Cancelled = true; }

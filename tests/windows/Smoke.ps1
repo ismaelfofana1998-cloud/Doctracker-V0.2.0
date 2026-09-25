@@ -366,6 +366,11 @@ try {
     if(!$type.GetField('proofDragging',$flags).GetValue($canvas)){throw 'Existing snip did not enter graphical edit mode.'}
     $type.GetMethod('CancelCommentDrag',$flags).Invoke($canvas,@()) | Out-Null
     if($type.GetField('proofDragging',$flags).GetValue($canvas) -or [Math]::Abs($canvas.GetNormalizedSelection().X-.2) -gt .001){throw 'Escape did not restore snip geometry.'}
+    $type.GetMethod('SetZoom',$flags).Invoke($canvas,[object[]]@(.2,$false)) | Out-Null
+    $canvas.GoToPage(21)
+    $continuousShot=[Drawing.Bitmap]::new($canvas.Width,$canvas.Height)
+    $canvas.DrawToBitmap($continuousShot,[Drawing.Rectangle]::new(0,0,$canvas.Width,$canvas.Height))
+    $continuousShot.Save((Join-Path $previewDirectory 'continuous-pages.png'));$continuousShot.Dispose()
     Write-Host 'PASS: continuous vertical scrolling, direct page number, bounded rendering cache, snip geometry edit/cancel'
 } finally {
     if ($canvas) { $canvas.Dispose() }
