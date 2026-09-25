@@ -283,7 +283,7 @@ namespace Doctracker.AddIn.UI
                         }
                     }
                 }
-                else writes.Add(PrepareWrite(target, document, pageNumber, rectangle, type, recognized.Text));
+                else writes.Add(PrepareWrite(target, document, pageNumber, rectangle, type, type==SnipType.Sum?SumSourceText(recognized):recognized.Text));
                 var preserveValue = type == SnipType.Validation || type == SnipType.Exception;
                 var appendSum = false;
                 if (type == SnipType.Sum)
@@ -836,6 +836,9 @@ namespace Doctracker.AddIn.UI
                 try { TextValueParser.ParseDate(value); return SnipType.Date; } catch (FormatException) { }
             return SnipType.Text;
         }
+
+        private static string SumSourceText(PageTextRecord page) => page.Words!=null && page.Words.Count>0
+            ? string.Join("\n",LayoutExtractor.Extract(page.Words).Select(cell=>cell.Text)) : page.Text;
 
         private static PageTextRecord ExtractIndexedSelection(DocumentRecord document, int pageNumber, RectangleF zone)
         {

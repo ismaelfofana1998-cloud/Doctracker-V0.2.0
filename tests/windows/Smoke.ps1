@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path $BuildDirectory).Path
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+[Windows.Forms.Application]::SetUnhandledExceptionMode([Windows.Forms.UnhandledExceptionMode]::ThrowException)
 [void][Reflection.Assembly]::LoadFrom((Join-Path $root 'Doctracker.Core.dll'))
 [void][Reflection.Assembly]::LoadFrom((Join-Path $root 'PdfiumViewer.dll'))
 [void][Reflection.Assembly]::LoadFrom((Join-Path $root 'Tesseract.dll'))
@@ -327,6 +328,18 @@ try {
     $picture.Image.Save((Join-Path $previewDirectory 'annotated-export.png'))
     Write-Host 'PASS: flattened PDF export with colored snips and Xref, reopened in PDFium'
 
+    $paneType=$assembly.GetType('Doctracker.AddIn.UI.DoctrackerPaneControl',$true)
+    $sumSource=$paneType.GetMethod('SumSourceText',($flags -bor [Reflection.BindingFlags]::Static))
+    $sumPage=New-Object Doctracker.Core.Models.PageTextRecord
+    foreach($item in @(@{Text='10';X=.1},@{Text='200';X=.6})) {
+        $word=New-Object Doctracker.Core.Models.WordRecord
+        $word.Text=$item.Text;$word.X=$item.X;$word.Y=.1;$word.Width=.1;$word.Height=.03;$word.Line=1
+        $sumPage.Words.Add($word)
+    }
+    $sumText=$sumSource.Invoke($null,[object[]]@($sumPage.PSObject.BaseObject))
+    $parser=New-Object Doctracker.Core.Services.TextValueParser
+    if($parser.Parse([Doctracker.Core.Models.SnipType]::Sum,$sumText) -ne '210'){throw 'Sum joined separate columns into a thousands group.'}
+    Write-Host 'PASS: snip sum preserves separate numeric columns'
     # Thirty-page native PDF: scroll to arbitrary pages with a bounded bitmap cache.
     $pageTotal=30; $fontId=3+2*$pageTotal
     $multiObjects=[Collections.Generic.List[string]]::new()

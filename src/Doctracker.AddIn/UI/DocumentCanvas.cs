@@ -726,7 +726,7 @@ namespace Doctracker.AddIn.UI
         {
             CancelCommentDrag();selectedCommentId=null;
             dragging = false; panning = false; picture.Capture = false;
-            currentPath=null;
+            currentPath=null;currentImage=null;
             foreach(var surface in pagePictures.Values)
             {
                 var image=surface.Image;surface.Image=null;image?.Dispose();

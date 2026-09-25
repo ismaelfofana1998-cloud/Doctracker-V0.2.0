@@ -196,7 +196,7 @@ namespace Doctracker.AddIn.UI
                         SetStatus("Reconnaissance de la nouvelle zone…");
                         using(var crop=canvas.CropRegion(zone))recognized=await System.Threading.Tasks.Task.Run(()=>ocr.Recognize(crop));
                     }
-                    raw=recognized.Text;
+                    raw=snip.Type==SnipType.Sum?SumSourceText(recognized):recognized.Text;
                 }
                 operation.Token.ThrowIfCancellationRequested();EnsureActiveWorkbook();
                 foreach(var target in targets)snapshots.Add(cells.Snapshot(target));
