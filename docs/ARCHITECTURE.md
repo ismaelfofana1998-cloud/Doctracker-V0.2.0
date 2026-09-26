@@ -1,68 +1,56 @@
-# Architecture Doctracker V0.2.0
+# Architecture Doctracker 0.3
 
-## Décision d'architecture
+- **Core** : modèles XML, parsing des valeurs, rectangles normalisés, extraction
+  géométrique des tableaux, recherche/matching et persistance. Cible `net48` pour
+  VSTO et `net8.0` pour les tests portables.
+- **AddIn** : ruban VSTO, volet WinForms, interactions COM Excel, PDFium et Tesseract.
+- **Stockage** : `project.xml` et copies des pièces dans un dossier adjacent au
+  classeur. Écriture par fichier temporaire, remplacement et sauvegarde `.bak`.
 
-Doctracker sépare la logique d'audit de l'intégration Excel :
+## Isolation et traitements
 
-```mermaid
-flowchart TD
-    Excel["Excel + VSTO"] --> Pane["Ruban et volet Doctracker"]
-    Pane --> Core["Doctracker.Core"]
-    Pane --> OCR["Tesseract local"]
-    Pane --> PDF["PDFium local"]
-    Core --> Store["project.xml + documents"]
-    Core --> Match["Moteur de matching"]
-```
+Un volet est attaché à chaque fenêtre Excel ; les fenêtres du même classeur
+partagent un contexte et un verrou logique d'opération. Toutes les interactions
+COM restent sur le thread Excel. L'import, l'indexation et le matching passent sur
+un worker ; les mises à jour de statut reviennent par `BeginInvoke`. Le classeur,
+la cellule, la page et la zone sont capturés avant l'attente. L'insertion contrôle
+à nouveau le classeur actif. Fermeture et sauvegarde sont suspendues pendant
+l'opération ; l'utilisateur peut l'annuler.
 
-Cette séparation permet de tester la persistance, le parsing comptable et le
-matching sans lancer Excel. Les interactions COM, le ruban et le volet restent
-dans `Doctracker.AddIn`.
+## Extraction et preuve
 
-## Cycle d'une preuve
+Les PDF natifs fournissent texte et boîtes PDFium converties de l'origine bas-gauche
+vers des coordonnées normalisées haut-gauche. Les scans fournissent les mêmes
+informations via Tesseract. L'index est construit à part puis remplacé après
+succès. Les images TIFF sont parcourues par frames.
 
-1. Le préparateur importe une pièce.
-2. Doctracker la copie dans le dossier local de la mission et calcule son
-   empreinte SHA-256.
-3. Le préparateur dessine une zone sur une page.
-4. Le bitmap de cette zone passe dans l'OCR local.
-5. Le parseur transforme le texte selon le type de snip.
-6. La valeur est écrite dans Excel.
-7. Le snip est enregistré avec le document, la page, la zone normalisée, la
-   feuille, la cellule, l'auteur et l'heure.
-8. Un double-clic sur la cellule recharge la page et surligne la zone.
-9. Le relecteur change le statut et saisit son commentaire.
+Les captures utilisent les mots indexés présents dans la zone, puis l'OCR du crop
+si nécessaire. Les tableaux passent par une reconstruction des lignes/colonnes et
+un aperçu éditable. La preuve conserve la zone réelle de chaque cellule produite.
 
-## Modèle de données
+Le snip est préparé sans persistance. L'add-in capture la destination, écrit la
+valeur et le commentaire, puis enregistre la preuve. Si cette séquence échoue, il
+restaure la destination et retire les nouveaux objets en mémoire. Ce mécanisme
+n'est pas une transaction distribuée résistante à un arrêt brutal d'Excel : le
+classeur doit être enregistré par l'utilisateur.
 
-`ProjectState` contient :
+Les commentaires contiennent un ou plusieurs marqueurs `DOCTRACKER-SNIP:`. Ils
+permettent le retour à la preuve après réouverture, déplacement ou copie de la
+cellule. L'adresse dans le journal reste l'adresse d'origine. Les notes personnelles
+sont séparées de la section Doctracker. La Somme garde chaque composante comme
+preuve distincte et calcule la valeur cumulée à l'insertion.
 
-- `Documents` : nom d'origine, chemin relatif, empreinte, pages OCR ;
-- `Snips` : type, texte brut, valeur, rectangle, cellule et statut ;
-- `AuditTrail` : action, acteur, date, entité et détail.
+## Matching
 
-Le rectangle est stocké entre `0` et `1`, indépendamment de la résolution
-d'affichage. Une zone reste donc stable si la page est rendue à une autre
-taille.
+La recherche interactive peut renvoyer des candidats partiels. Le matching exige
+tous les critères non vides sur la même page et un seul candidat. Il conserve les
+valeurs trouvées dans la pièce et les zones disponibles. Une page legacy sans
+positions produit une preuve de page entière explicitement signalée.
 
-## Confidentialité
+## Limites
 
-- pas de base cloud ;
-- pas d'API OCR ;
-- pas de télémétrie ;
-- pas de clé privée ou de jeton dans le dépôt ;
-- données OCR stockées dans le dossier de la mission ;
-- empreinte des pièces pour détecter les imports en double.
-
-La future vérification de licence devra être isolée du contenu de mission :
-seules les informations d'activation pourront transiter, jamais les documents,
-les cellules ou les résultats OCR.
-
-## Évolutions prévues
-
-1. index OCR positionnel mot par mot ;
-2. Table Snip fondé sur les coordonnées des mots et non les espaces ;
-3. matching multicritère paramétrable par colonne ;
-4. export du journal de revue ;
-5. gestion des versions de pièces ;
-6. signature de code et licence commerciale ;
-7. installation MSI administrable en environnement cabinet.
+Aucun stockage cloud, OCR distant ou envoi de pièces. Les dossiers ne sont pas
+embarqués dans le classeur. La revue et le journal sont locaux et modifiables sur
+le disque, sans garantie cryptographique. Les états COM, les opérations de revue,
+les changements de classeur et l'installation doivent être vérifiés dans Excel
+selon `VALIDATION_EXCEL.md`.

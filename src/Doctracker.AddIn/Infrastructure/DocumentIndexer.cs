@@ -1,7 +1,13 @@
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Text.RegularExpressions;
 using Doctracker.Core.Models;
 using Doctracker.Core.Services;
 using PdfiumViewer;
@@ -12,74 +18,248 @@ namespace Doctracker.AddIn.Infrastructure
     {
         private readonly ProjectStore store;
         private readonly IOcrEngine ocr;
-
-        public DocumentIndexer(ProjectStore store, IOcrEngine ocr)
+        public int WorkerCount {get;set;}=OcrSettings.LoadWorkers();
+        public DocumentIndexer(ProjectStore store, IOcrEngine ocr) { this.store=store;this.ocr=ocr; }
+        private sealed class Plan : IDisposable
         {
-            this.store = store ?? throw new ArgumentNullException(nameof(store));
-            this.ocr = ocr ?? throw new ArgumentNullException(nameof(ocr));
+            public DocumentRecord Document;
+            public string Path;
+            public List<PageTextRecord> Pages,OldPages;
+            public List<int> Pending;
+            public bool RequiresOcr;
+            public int Reported,Recognized;
+            public Exception Failure;
+            public CancellationTokenSource Cancellation;
+            public readonly object Sync=new object();
+            public void Dispose()=>Cancellation.Dispose();
         }
-
-        public void Index(ProjectState state, DocumentRecord document, Action<int, int> progress)
+        private sealed class Job {public Plan Plan;public List<int> Pages;}
+        private Plan Prepare(DocumentRecord document,Action<int,int> progress,CancellationToken cancellation,bool forceOcr,bool allowOcr)
         {
             var path = store.ResolveDocumentPath(document);
-            document.IndexedPages.Clear();
-
+            // Build separately: a failed/cancelled re-index must not erase the previous index.
+            List<PageTextRecord> oldPages;
+            try{oldPages=document.IndexedPages;}
+            catch(Exception failure) when(failure is InvalidOperationException || failure is System.Xml.XmlException || failure is IOException || failure is InvalidDataException)
+            {oldPages=new List<PageTextRecord>();}
+            var cachedPages=!document.IndexComplete && !forceOcr ? oldPages.Where(p=>!string.IsNullOrWhiteSpace(p.Text)).GroupBy(p=>p.PageNumber).ToDictionary(g=>g.Key,g=>g.First()) : new Dictionary<int,PageTextRecord>();
+            var requiresOcr=false;
+            var pages = new List<PageTextRecord>();
+            var pendingOcr = new List<int>();
+            var isolated=ocr as IsolatedOcrEngine;
             if (string.Equals(Path.GetExtension(path), ".pdf", StringComparison.OrdinalIgnoreCase))
             {
                 NativePdfiumLoader.EnsureLoaded();
                 using (var pdf = PdfDocument.Load(path))
                 {
-                    document.PageCount = pdf.PageCount;
                     for (var index = 0; index < pdf.PageCount; index++)
                     {
-                        using (var rendered = pdf.Render(
-                            index, 1800, 2400, 144, 144,
-                            PdfRenderFlags.Annotations | PdfRenderFlags.LcdText))
-                        using (var bitmap = new Bitmap(rendered))
+                        cancellation.ThrowIfCancellationRequested();
+                        if(cachedPages.TryGetValue(index+1,out var cached)){pages.Add(cached);progress?.Invoke(index+1-pendingOcr.Count,pdf.PageCount);continue;}
+                        var native = pdf.GetPdfText(index);
+                        PageTextRecord page;
+                        if (!forceOcr && !string.IsNullOrWhiteSpace(native)) page = ReadNativePage(pdf, index, native);
+                        else if(!allowOcr) { page=new PageTextRecord();requiresOcr=true; }
+                        else if(isolated!=null) { page=new PageTextRecord();pendingOcr.Add(index+1); }
+                        else
                         {
-                            document.IndexedPages.Add(new PageTextRecord
-                            {
-                                PageNumber = index + 1,
-                                Text = ocr.Recognize(bitmap)
-                            });
+                            progress?.Invoke(index,pdf.PageCount);
+                            var size = RenderSize(pdf.PageSizes[index]);
+                            using (var rendered = pdf.Render(index, size.Width, size.Height, 144, 144, PdfRenderFlags.Annotations))
+                            using (var bitmap = new Bitmap(rendered)) page = ocr.Recognize(bitmap);
                         }
-                        progress?.Invoke(index + 1, pdf.PageCount);
+                        page.PageNumber = index + 1;
+                        pages.Add(page);
+                        progress?.Invoke(index + 1 - pendingOcr.Count, pdf.PageCount);
                     }
                 }
             }
             else
             {
                 using (var original = Image.FromFile(path))
-                using (var bitmap = new Bitmap(original))
                 {
-                    document.PageCount = 1;
-                    document.IndexedPages.Add(new PageTextRecord
+                    var count = ImagePageCount(original);
+                    for (var index = 0; index < count; index++)
                     {
-                        PageNumber = 1,
-                        Text = ocr.Recognize(bitmap)
-                    });
-                    progress?.Invoke(1, 1);
+                        cancellation.ThrowIfCancellationRequested();
+                        if(cachedPages.TryGetValue(index+1,out var cached)){pages.Add(cached);continue;}
+                        if(!allowOcr){pages.Add(new PageTextRecord {PageNumber=index+1});requiresOcr=true;continue;}
+                        if(isolated!=null){pages.Add(new PageTextRecord {PageNumber=index+1});pendingOcr.Add(index+1);continue;}
+                        progress?.Invoke(index,count);
+                        if (count > 1) original.SelectActiveFrame(FrameDimension.Page, index);
+                        using (var bitmap = new Bitmap(original))
+                        {
+                            var page = ocr.Recognize(bitmap);
+                            page.PageNumber = index + 1;
+                            pages.Add(page);
+                        }
+                        progress?.Invoke(index + 1, count);
+                    }
                 }
             }
-
-            state.AuditTrail.Add(new AuditEventRecord
-            {
-                Actor = Environment.UserName,
-                Action = "DocumentIndexed",
-                EntityType = "Document",
-                EntityId = document.Id,
-                Details = document.IndexedPages.Count + " page(s)"
-            });
-            store.Save(state);
+            return new Plan {Document=document,Path=path,Pages=pages,OldPages=oldPages,Pending=pendingOcr,RequiresOcr=requiresOcr,
+                Reported=pages.Count-pendingOcr.Count,Cancellation=CancellationTokenSource.CreateLinkedTokenSource(cancellation)};
         }
-
-        public void IndexMissing(ProjectState state, Action<string, int, int> progress)
+        private void Recognize(IReadOnlyList<Plan> plans,Action<string,int,int> progress,CancellationToken cancellation)
         {
-            foreach (var document in state.Documents.Where(item => item.IndexedPages.Count == 0))
+            var workers=Math.Max(1,Math.Min(16,WorkerCount));
+            var jobs=new List<Job>();
+            foreach(var plan in plans)
             {
-                Index(state, document,
-                    (page, count) => progress?.Invoke(document.OriginalName, page, count));
+                // Share a small document among workers too, without one launch per page on large PDFs.
+                var size=Math.Min(8,Math.Max(1,(int)Math.Ceiling(plan.Pending.Count/(double)workers)));
+                for(var i=0;i<plan.Pending.Count;i+=size)jobs.Add(new Job {Plan=plan,Pages=plan.Pending.Skip(i).Take(size).ToList()});
+            }
+            if(jobs.Count==0)return;
+            DiagnosticLog.Write("ParallelOcrStart workers="+Math.Min(workers,jobs.Count)+" jobs="+jobs.Count);
+            var timer=Stopwatch.StartNew();
+            try
+            {
+                Parallel.ForEach(jobs,new ParallelOptions {MaxDegreeOfParallelism=workers,CancellationToken=cancellation},job=>{
+                    var plan=job.Plan;
+                    if(plan.Cancellation.IsCancellationRequested)return;
+                    try
+                    {
+                        using(var engine=((IsolatedOcrEngine)ocr).CreateBatchEngine())
+                        {
+                            var pages=engine.RecognizePages(plan.Path,job.Pages,number=>{
+                                lock(plan.Sync)progress?.Invoke(plan.Document.OriginalName,++plan.Reported,plan.Pages.Count);
+                            },plan.Cancellation.Token);
+                            lock(plan.Sync)
+                            {
+                                foreach(var page in pages)plan.Pages[page.PageNumber-1]=page;
+                                plan.Recognized+=pages.Count;
+                            }
+                        }
+                    }
+                    catch(OperationCanceledException) when(plan.Cancellation.IsCancellationRequested) { }
+                    catch(Exception failure)
+                    {
+                        lock(plan.Sync){if(plan.Failure==null)plan.Failure=failure;}
+                        plan.Cancellation.Cancel(); // Cancel siblings for this document, not unrelated documents.
+                    }
+                });
+            }
+            finally {DiagnosticLog.Write("ParallelOcrEnd elapsedMs="+timer.ElapsedMilliseconds);}
+            cancellation.ThrowIfCancellationRequested();
+        }
+        private void Commit(ProjectState state,Plan plan)
+        {
+            if(plan.Failure!=null)throw new InvalidOperationException("Reconnaissance interrompue pour ce document.",plan.Failure);
+            if(plan.Recognized!=plan.Pending.Count)throw new OperationCanceledException();
+            var document=plan.Document;
+            var oldCount=document.PageCount;var oldComplete=document.IndexComplete;var oldError=document.IndexError;
+            document.IndexedPages=plan.Pages;document.PageCount=plan.Pages.Count;document.IndexComplete=!plan.RequiresOcr;document.IndexError="";
+            var entry=new AuditEventRecord {Actor=Environment.UserName,Action=plan.RequiresOcr?"NativeTextPrepared":"DocumentIndexed",
+                EntityType="Document",EntityId=document.Id,Details=plan.Pages.Count+" page(s)"};
+            state.AuditTrail.Add(entry);
+            var timer=Stopwatch.StartNew();
+            try {store.Save(state,createRecoveryCheckpoint:false);document.ReleaseIndex();}
+            catch
+            {
+                document.IndexedPages=plan.OldPages;document.PageCount=oldCount;document.IndexComplete=oldComplete;document.IndexError=oldError;
+                state.AuditTrail.Remove(entry);throw;
+            }
+            finally{DiagnosticLog.Write("IndexSave elapsedMs="+timer.ElapsedMilliseconds);}
+        }
+        public void Index(ProjectState state,DocumentRecord document,Action<int,int> progress,CancellationToken cancellation,bool forceOcr=false,bool allowOcr=true)
+        {
+            using(var plan=Prepare(document,progress,cancellation,forceOcr,allowOcr))
+            {
+                Recognize(new[]{plan},(name,page,count)=>progress?.Invoke(page,count),cancellation);
+                cancellation.ThrowIfCancellationRequested();Commit(state,plan);
             }
         }
+        public List<string> IndexMissing(ProjectState state,Action<string,int,int> progress,CancellationToken cancellation,IEnumerable<DocumentRecord> scope=null,bool retryFailed=true,bool forceReindex=false,bool allowOcr=true)
+        {
+            var errors=new List<string>();var changed=false;
+            var documents=(scope??state.Documents).ToList();
+            // Only this coordinator accesses ProjectStore and ProjectState. OCR workers
+            // exchange detached page results; they never save or use Excel COM objects.
+            var width=allowOcr && ocr is IsolatedOcrEngine?Math.Max(1,Math.Min(16,WorkerCount)):1;
+            try
+            {
+                for(var offset=0;offset<documents.Count;offset+=width)
+                {
+                    cancellation.ThrowIfCancellationRequested();
+                    var plans=new List<Plan>();
+                    try
+                    {
+                        foreach(var document in documents.Skip(offset).Take(width))
+                        {
+                            cancellation.ThrowIfCancellationRequested();
+                            if(!retryFailed && !string.IsNullOrEmpty(document.IndexError)){errors.Add(document.OriginalName+" : "+document.IndexError);continue;}
+                            if(!forceReindex && store.ValidateIndex(document))continue;
+                            try
+                            {
+                                var timer=Stopwatch.StartNew();
+                                plans.Add(Prepare(document,(page,count)=>progress?.Invoke(document.OriginalName,page,count),cancellation,false,allowOcr));
+                                DiagnosticLog.Write("IndexPrepare elapsedMs="+timer.ElapsedMilliseconds);
+                            }
+                            catch(OperationCanceledException){throw;}
+                            catch(Exception failure){document.IndexError=failure.Message;changed=true;errors.Add(document.OriginalName+" : "+failure.Message);}
+                        }
+                        try {Recognize(plans,progress,cancellation);}
+                        catch(OperationCanceledException) when(cancellation.IsCancellationRequested) { /* Commit completed documents below, never partial ones. */ }
+                        foreach(var plan in plans)
+                        {
+                            if(plan.Failure==null && plan.Recognized!=plan.Pending.Count)continue;
+                            try {Commit(state,plan);}
+                            catch(Exception failure)
+                            {plan.Document.IndexError=failure.Message;changed=true;errors.Add(plan.Document.OriginalName+" : "+failure.Message);}
+                        }
+                        cancellation.ThrowIfCancellationRequested();
+                    }
+                    finally {foreach(var plan in plans)plan.Dispose();}
+                }
+            }
+            finally {if(changed)store.Save(state,createRecoveryCheckpoint:false);}
+            return errors;
+        }
+
+        internal static PageTextRecord ReadNativePage(string path, int pageNumber)
+        {
+            if (!string.Equals(Path.GetExtension(path), ".pdf", StringComparison.OrdinalIgnoreCase)) return null;
+            NativePdfiumLoader.EnsureLoaded();
+            using (var pdf = PdfDocument.Load(path))
+            {
+                if (pageNumber < 1 || pageNumber > pdf.PageCount) return null;
+                var text = pdf.GetPdfText(pageNumber - 1);
+                if (string.IsNullOrWhiteSpace(text)) return null;
+                var page = ReadNativePage(pdf, pageNumber - 1, text);
+                page.PageNumber = pageNumber; return page;
+            }
+        }
+
+        private static PageTextRecord ReadNativePage(PdfDocument pdf, int index, string text)
+        {
+            var page = new PageTextRecord { Text = text };
+            var size = pdf.PageSizes[index];
+            var line = 0;
+            double previousY = -1;
+            foreach (Match match in Regex.Matches(text, @"\S+"))
+            {
+                var boxes = pdf.GetTextBounds(new PdfTextSpan(index, match.Index, match.Length));
+                if (boxes.Count == 0) continue;
+                // PDFium uses a bottom-left origin and negative rectangle heights.
+                var x = Math.Max(0, boxes.Min(box => box.Bounds.Left)) / size.Width;
+                var y = Math.Max(0, size.Height - boxes.Max(box => box.Bounds.Top)) / size.Height;
+                var right = Math.Min(size.Width, boxes.Max(box => box.Bounds.Right)) / size.Width;
+                var bottom = Math.Min(size.Height, size.Height - boxes.Min(box => box.Bounds.Bottom)) / size.Height;
+                if (right <= x || bottom <= y) continue;
+                if (previousY < 0 || Math.Abs(y - previousY) > (bottom - y) * 0.6) line++;
+                previousY = y;
+                page.Words.Add(new WordRecord { Text = match.Value, Line = line, X = x, Y = y, Width = right - x, Height = bottom - y });
+            }
+            return page;
+        }
+
+        internal static Size RenderSize(SizeF page)
+        {
+            var scale = Math.Min(2.5, 3000d / Math.Max(page.Width, page.Height));
+            return new Size(Math.Max(1, (int)Math.Ceiling(page.Width * scale)), Math.Max(1, (int)Math.Ceiling(page.Height * scale)));
+        }
+        internal static int ImagePageCount(Image image) => image.FrameDimensionsList.Contains(FrameDimension.Page.Guid)
+            ? image.GetFrameCount(FrameDimension.Page) : 1;
     }
 }

@@ -9,9 +9,11 @@ namespace Doctracker.Core.Services
 {
     public sealed class TextValueParser
     {
-        private static readonly Regex NumberPattern =
-            new Regex(@"[-+]?\d(?:[\d \t\u00A0.,]*\d)?", RegexOptions.Compiled);
-
+        // A space joins thousands only when followed by exactly three digits.
+        // Tabs, line breaks and two spaces delimit separate table cells.
+        private static readonly Regex NumberPattern = new Regex(
+            @"\(?[-+−]?(?:\d{1,3}(?:[ \u00A0\u202F]\d{3}(?!\d))+|\d+)(?:[.,]\d+)*-?\)?",
+            RegexOptions.Compiled);
         private static readonly string[] DateFormats =
         {
             "dd/MM/yyyy", "d/M/yyyy", "dd-MM-yyyy", "d-M-yyyy",
@@ -21,32 +23,39 @@ namespace Doctracker.Core.Services
         public string Parse(SnipType type, string rawText)
         {
             var text = (rawText ?? string.Empty).Trim();
+            if (text.Length == 0) throw new FormatException("Aucun texte reconnu dans cette zone. Agrandissez la sélection.");
             switch (type)
             {
-                case SnipType.Text:
-                    return Regex.Replace(text, @"\s+", " ");
-                case SnipType.Number:
-                    return ParseNumber(text).ToString("0.################", CultureInfo.InvariantCulture);
-                case SnipType.Date:
-                    return ParseDate(text).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-                case SnipType.Sum:
-                    return ParseAllNumbers(text).Sum().ToString("0.################", CultureInfo.InvariantCulture);
+                case SnipType.Validation:
+                case SnipType.Exception:
+                case SnipType.Text: return Regex.Replace(text, @"\s+", " ");
+                case SnipType.Number: return Format(ParseNumber(text));
+                case SnipType.Date: return ParseDate(text).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                case SnipType.Sum: return Format(ParseAllNumbers(text).Sum());
                 case SnipType.Table:
-                    return NormalizeTable(text);
-                default:
-                    throw new ArgumentOutOfRangeException(nameof(type));
+                    return string.Join("\n", Regex.Split(text, @"\r?\n")
+                        .Select(line => Regex.Replace(line.Trim(), @"(?: {2,}|\t+)", "\t"))
+                        .Where(line => line.Length > 0));
+                default: throw new ArgumentOutOfRangeException(nameof(type));
             }
         }
 
         public decimal ParseNumber(string text)
         {
-            var match = NumberPattern.Match(text ?? string.Empty);
-            if (!match.Success)
-            {
-                throw new FormatException("No number was recognized in the selected zone.");
-            }
+            var matches = NumberPattern.Matches(text ?? string.Empty);
+            decimal value;
+            if (matches.Count != 1 || !TryParseNumericToken(matches[0].Value, out value))
+                throw new FormatException("Sélectionnez un seul nombre non ambigu (ou utilisez Somme).");
+            return value;
+        }
 
-            return ParseNumericToken(match.Value);
+        public bool TryParseAmount(string text, out decimal value)
+        {
+            value = 0;
+            var token = Regex.Replace(text ?? string.Empty, @"(?i)\b(?:EUR|USD|GBP|FCFA|XOF|CHF)\b|[€$£]", "").Trim();
+            var match = NumberPattern.Match(token);
+            return match.Success && match.Index == 0 && match.Length == token.Length &&
+                TryParseNumericToken(token, out value);
         }
 
         public IReadOnlyList<decimal> ParseAllNumbers(string text)
@@ -55,76 +64,72 @@ namespace Doctracker.Core.Services
             foreach (Match match in NumberPattern.Matches(text ?? string.Empty))
             {
                 decimal value;
-                if (TryParseNumericToken(match.Value, out value))
-                {
-                    values.Add(value);
-                }
+                if (!TryParseNumericToken(match.Value, out value))
+                    throw new FormatException("Un montant est ambigu : " + match.Value);
+                values.Add(value);
             }
-
-            if (values.Count == 0)
-            {
-                throw new FormatException("No amount was recognized in the selected zone.");
-            }
-
+            if (values.Count == 0) throw new FormatException("Aucun montant reconnu dans cette zone.");
             return values;
         }
 
-        private static DateTime ParseDate(string text)
+        public static DateTime ParseDate(string text)
         {
-            DateTime result;
-            foreach (Match match in Regex.Matches(text ?? string.Empty, @"\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}"))
+            var dates = new List<DateTime>();
+            foreach (Match match in Regex.Matches(text ?? string.Empty, @"(?<!\d)\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}(?!\d)"))
             {
-                if (DateTime.TryParseExact(match.Value, DateFormats, CultureInfo.InvariantCulture,
-                    DateTimeStyles.None, out result))
-                {
-                    return result;
-                }
+                DateTime result;
+                if (DateTime.TryParseExact(match.Value, DateFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out result))
+                    dates.Add(result);
             }
-
-            throw new FormatException("No supported date was recognized in the selected zone.");
+            if (dates.Count != 1) throw new FormatException("Sélectionnez une seule date valide (jour/mois/année).");
+            return dates[0];
         }
 
-        private static decimal ParseNumericToken(string token)
-        {
-            decimal value;
-            if (!TryParseNumericToken(token, out value))
-            {
-                throw new FormatException("The recognized number is ambiguous.");
-            }
-            return value;
-        }
+        private static string Format(decimal value) => value.ToString("0.############################", CultureInfo.InvariantCulture);
 
         private static bool TryParseNumericToken(string token, out decimal value)
         {
-            value = 0m;
-            var normalized = Regex.Replace(token ?? string.Empty, @"[\s\u00A0]", string.Empty);
-            if (normalized.Length == 0) return false;
-
-            var lastComma = normalized.LastIndexOf(',');
-            var lastDot = normalized.LastIndexOf('.');
-            var decimalIndex = Math.Max(lastComma, lastDot);
-
-            if (decimalIndex >= 0 && normalized.Length - decimalIndex - 1 <= 2)
+            value = 0;
+            var normalized = Regex.Replace(token ?? "", @"[ \u00A0\u202F]", "").Replace('−', '-');
+            var parentheses = normalized.StartsWith("(") && normalized.EndsWith(")");
+            if (parentheses) normalized = normalized.Substring(1, normalized.Length - 2);
+            else if (normalized.Contains("(") || normalized.Contains(")")) return false;
+            if (normalized.EndsWith("-"))
             {
-                var integerPart = Regex.Replace(normalized.Substring(0, decimalIndex), @"[.,]", string.Empty);
-                var decimals = normalized.Substring(decimalIndex + 1);
-                normalized = integerPart + "." + decimals;
+                if (parentheses || normalized.StartsWith("-")) return false;
+                normalized = "-" + normalized.Substring(0, normalized.Length - 1);
             }
-            else
+            var comma = normalized.LastIndexOf(',');
+            var dot = normalized.LastIndexOf('.');
+            if (comma >= 0 && dot >= 0)
             {
-                normalized = Regex.Replace(normalized, @"[.,]", string.Empty);
+                var decimalSeparator = comma > dot ? ',' : '.';
+                var groupingSeparator = comma > dot ? '.' : ',';
+                var pieces = normalized.Split(decimalSeparator);
+                if (pieces.Length != 2 || !ValidGroupedInteger(pieces[0], groupingSeparator)) return false;
+                normalized = pieces[0].Replace(groupingSeparator.ToString(), "") + "." + pieces[1];
             }
-
-            return decimal.TryParse(normalized, NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint,
-                CultureInfo.InvariantCulture, out value);
+            else if (comma >= 0 || dot >= 0)
+            {
+                var separator = comma >= 0 ? ',' : '.';
+                var parts = normalized.Split(separator);
+                if (ValidGroupedInteger(normalized, separator)) normalized = normalized.Replace(separator.ToString(), "");
+                else if (parts.Length == 2) normalized = parts[0] + "." + parts[1];
+                else return false;
+            }
+            if (!decimal.TryParse(normalized, NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint,
+                CultureInfo.InvariantCulture, out value)) return false;
+            if (parentheses)
+            {
+                if (value < 0) return false;
+                value = -value;
+            }
+            return true;
         }
 
-        private static string NormalizeTable(string text)
+        private static bool ValidGroupedInteger(string text, char separator)
         {
-            var lines = Regex.Split(text ?? string.Empty, @"\r?\n")
-                .Select(line => Regex.Replace(line.Trim(), @"\s{2,}", "\t"))
-                .Where(line => line.Length > 0);
-            return string.Join(Environment.NewLine, lines);
+            return Regex.IsMatch(text, @"^[-+]?\d{1,3}(?:" + Regex.Escape(separator.ToString()) + @"\d{3})+$");
         }
     }
 }

@@ -6,7 +6,9 @@ namespace Doctracker.Core.Geometry
     {
         public NormalizedRectangle(double x, double y, double width, double height)
         {
-            if (x < 0 || y < 0 || width <= 0 || height <= 0 ||
+            if (double.IsNaN(x) || double.IsNaN(y) || double.IsNaN(width) || double.IsNaN(height) ||
+                double.IsInfinity(x) || double.IsInfinity(y) || double.IsInfinity(width) || double.IsInfinity(height) ||
+                x < 0 || y < 0 || width <= 0 || height <= 0 ||
                 x + width > 1.000001 || y + height > 1.000001)
             {
                 throw new ArgumentOutOfRangeException(nameof(width), "The snip rectangle must be inside the page.");

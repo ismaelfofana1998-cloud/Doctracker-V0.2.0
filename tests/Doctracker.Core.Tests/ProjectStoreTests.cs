@@ -28,6 +28,8 @@ namespace Doctracker.Core.Tests
                     DocumentId = "doc-1",
                     WorksheetName = "Achats",
                     CellAddress = "F12",
+                    Type = SnipType.Number,
+                    SourceType = SnipType.Table,
                     ExtractedValue = "1250"
                 });
                 state.AuditTrail.Add(new AuditEventRecord
@@ -43,6 +45,8 @@ namespace Doctracker.Core.Tests
                 Assert.Single(loaded.Snips);
                 Assert.Single(loaded.AuditTrail);
                 Assert.Equal("F12", loaded.Snips[0].CellAddress);
+                Assert.Equal(SnipType.Number, loaded.Snips[0].Type);
+                Assert.Equal(SnipType.Table, loaded.Snips[0].SourceType);
             }
             finally
             {

@@ -1,3 +1,65 @@
+# 0.9.9 — Clavier après un snip
+
+- Le saut automatique à la cellule suivante est conservé.
+- Le clavier est rendu à la feuille avant de désactiver le lecteur pendant l’extraction, puis à la fin du snip si le focus appartient encore au panneau.
+- Au retour sur une cellule, la navigation automatique vers sa preuve conserve le focus exact de la feuille. Elle est ignorée si le clavier est déjà dans un éditeur ou une autre fenêtre ; un panneau déjà visible n’est plus réactivé inutilement.
+- Une modification de la cellule pendant l’OCR est conservée au lieu d’être écrasée par le résultat tardif.
+- Tests natifs Windows x86/x64 du focus et de la première frappe. Le parcours complet avec Excel doit aussi être vérifié sur le poste utilisateur.
+
+# 0.9.8 — Réinstallation et réglage OCR
+
+- Corrige l’enregistrement du nombre de moteurs sous Windows PowerShell lorsque le fichier de réglages existe déjà (`File.Replace` recevait une chaîne vide au lieu de null pour le chemin de sauvegarde).
+- Un échec de sauvegarde du réglage après la sortie réussie de setup.exe affiche un avertissement ciblé au lieu d’annoncer un échec global de l’installation.
+- Tests Windows : première installation, réinstallation avec 10 moteurs, changement du choix, fichier verrouillé et nettoyage des temporaires.
+
+# 0.9.7 — Recherche synchronisée, grille sur PDF et anomalies
+
+- La recherche suit la cellule active et conserve les saisies manuelles sur une même cellule.
+- Éditeur de tableau avec grille superposée au PDF : ajouter, déplacer et supprimer les points de séparation avant insertion.
+- Validation et Anomalie extraient le texte source, y compris après déplacement du snip. « Exception » devient « Anomalie » dans l’interface.
+- Détails et limites : `docs/EDITION_0.9.7.md`.
+
+# 0.9.6 — OCR parallèle et matching texte
+
+- Moteurs OCR simultanés configurables à l'installation et dans le ruban, avec conseil selon le processeur et la RAM.
+- Répartition des pages d'un PDF entre plusieurs moteurs, résultats ordonnés et sauvegarde séquentielle.
+- Matching automatique : premier résultat texte, sans rejet d'ambiguïté ni interprétation montant/date.
+- Détails et limites : `docs/OCR_PARALLELE_0.9.6.md`.
+
+# 0.9.5 — OCR sélectionné et traitement groupé
+
+- Bouton OCR, sélection multiple et traitement par dossier.
+- Matching initial sur les documents prêts, extension choisie sans OCR imposé.
+- Lots isolés de 16 pages maximum avec moteur réutilisé et rendu hors Excel.
+- Édition Excel au double-clic restaurée ; suivi de sélection regroupé.
+- Détails et limites : `docs/OCR_SELECTION_0.9.5.md`.
+
+# 0.3.0 — fiabilisation des parcours Excel
+
+## 0.9.3
+- Préparation de la zone et OCR des snips dans un processus externe, annulable et limité en durée.
+- Erreur contrôlée si le moteur s’arrête ; aucun résultat partiel envoyé aux cellules.
+- Journaux distinguant rasterisation, reconnaissance et sortie du processus ; temporaires supprimés après requête.
+- Bouton de suppression adapté aux plages ; tests d’arrêt du moteur, timeout, annulation et livraison ClickOnce des exécutables x86/x64.
+
+## 0.9.2
+- Aperçus PDF/images proportionnés à leur taille affichée pour limiter la mémoire à faible zoom.
+- Découpe OCR depuis la source et depuis la page capturée, indépendamment du zoom et du défilement.
+- Protection des événements du lecteur et des fins de snip ; libération des images en cas d’échec.
+- Diagnostic local borné et sans contenu documentaire ; tests de découpes répétées et cycles de documents.
+
+## 0.9.1
+- Défilement horizontal stable après zoom et changement de page.
+- Suppression des snips d’une plage, sans supprimer les liens hors sélection ni les valeurs Excel.
+- Relecture des références Excel lors de la navigation/réparation ; rattachement manuel des preuves déliées ; conservation des destinations de récupération et du nom interne de feuille.
+- Tests de suppression transactionnelle et du lecteur Windows ; documentation des caches et des limites du tri/coller.
+
+Rendu/zoom et coordonnées corrigés, OCR ClickOnce x86/x64, PDF natif positionnel,
+TIFF multipage, annulation, isolation des classeurs, Enregistrer sous, écritures
+avec confirmation/restauration, validation/exception, preuves multiples, somme
+multi-zone, aperçu des tableaux, matching exact multicritère et tests de régression.
+Voir `docs/CORRECTIONS_0.3.md` pour les défauts, les tests et les limites réelles.
+
 # Journal des versions
 
 ## 0.2.0 — 31 juillet 2026

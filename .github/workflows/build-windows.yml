@@ -87,6 +87,26 @@ jobs:
             /p:CertificateThumbprint=$thumbprint
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Smoke test rendering, native PDF and OCR (x64)
+        timeout-minutes: 4
+        shell: powershell
+        run: ./tests/windows/Smoke.ps1
+
+      - name: Smoke test rendering, native PDF and OCR (x86)
+        timeout-minutes: 4
+        shell: powershell
+        run: |
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File ./tests/windows/Smoke.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload UI previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Doctracker-UI-Previews
+          path: artifacts/ui-previews/*.png
+          if-no-files-found: warn
+
       - name: Publish ClickOnce installer
         shell: pwsh
         run: |
@@ -128,8 +148,11 @@ jobs:
             @{ Label = "certificat public"; Minimum = 1; Files = @(Get-ChildItem $root -Recurse -File -Filter "Doctracker-Development.cer") },
             @{ Label = "assistant d'installation CMD"; Minimum = 1; Files = @(Get-ChildItem $root -Recurse -File -Filter "Install-Doctracker.cmd") },
             @{ Label = "assistant d'installation PowerShell"; Minimum = 1; Files = @(Get-ChildItem $root -Recurse -File -Filter "Install-Doctracker.ps1") },
+            @{ Label = "réglage OCR installation"; Minimum = 1; Files = @(Get-ChildItem $root -Recurse -File -Filter "Ocr-Settings.ps1") },
             @{ Label = "manifest .vsto"; Minimum = 1; Files = @(Get-ChildItem $root -Recurse -File -Filter "*.vsto") },
             @{ Label = "manifest applicatif"; Minimum = 1; Files = @(Get-ChildItem $root -Recurse -File -Filter "*.dll.manifest*") },
+            @{ Label = "OCR worker x86"; Minimum = 1; Files = @(Get-ChildItem $root -Recurse -File -Filter "Doctracker.OcrWorker.x86.exe*") },
+            @{ Label = "OCR worker x64"; Minimum = 1; Files = @(Get-ChildItem $root -Recurse -File -Filter "Doctracker.OcrWorker.x64.exe*") },
             @{ Label = "Doctracker.AddIn.dll"; Minimum = 1; Files = @(Get-ChildItem $root -Recurse -File -Filter "Doctracker.AddIn.dll*") },
             @{ Label = "fra.traineddata"; Minimum = 1; Files = @(Get-ChildItem $root -Recurse -File -Filter "fra.traineddata*") },
             @{ Label = "eng.traineddata"; Minimum = 1; Files = @(Get-ChildItem $root -Recurse -File -Filter "eng.traineddata*") },
@@ -149,6 +172,9 @@ jobs:
             if ($manifestText -notmatch "$architecture\\pdfium\.dll(?:\.deploy)?") {
               throw "Le manifeste ClickOnce ne référence pas $architecture\pdfium.dll."
             }
+          }
+          foreach ($architecture in @("x86", "x64")) {
+            if ($manifestText -notmatch "Doctracker\.OcrWorker\.$architecture\.exe(?:\.deploy)?") { throw "Worker OCR $architecture absent du manifeste." }
           }
           $setup = (Get-ChildItem $root -Recurse -File -Filter "setup.exe" | Select-Object -First 1).FullName
           $signature = Get-AuthenticodeSignature $setup

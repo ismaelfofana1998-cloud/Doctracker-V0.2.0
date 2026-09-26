@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Collections.Generic;
 using Doctracker.Core.Geometry;
 using Doctracker.Core.Models;
 
@@ -16,7 +17,7 @@ namespace Doctracker.Core.Services
             this.parser = parser ?? throw new ArgumentNullException(nameof(parser));
         }
 
-        public SnipRecord Create(
+        public SnipRecord Prepare(
             ProjectState state,
             string documentId,
             int pageNumber,
@@ -54,17 +55,79 @@ namespace Doctracker.Core.Services
                 Status = ReviewStatus.Prepared
             };
 
-            state.Snips.Add(snip);
-            state.AuditTrail.Add(new AuditEventRecord
-            {
-                Actor = actor ?? string.Empty,
-                Action = "SnipCreated",
-                EntityType = "Snip",
-                EntityId = snip.Id,
-                Details = worksheetName + "!" + cellAddress
-            });
-            store.Save(state);
             return snip;
+        }
+
+        public void Commit(ProjectState state, IReadOnlyList<SnipRecord> snips)
+        {
+            var events = snips.Select(snip => new AuditEventRecord
+            {
+                Actor = snip.PreparedBy, Action = "SnipCreated", EntityType = "Snip", EntityId = snip.Id,
+                Details = snip.WorksheetName + "!" + snip.CellAddress
+            }).ToList();
+            state.Snips.AddRange(snips);
+            state.AuditTrail.AddRange(events);
+            try { store.Save(state); }
+            catch
+            {
+                foreach (var snip in snips) state.Snips.Remove(snip);
+                foreach (var entry in events) state.AuditTrail.Remove(entry);
+                throw;
+            }
+        }
+
+        public void Delete(ProjectState state, string snipId, string actor)
+        {
+            var snip = state.Snips.FirstOrDefault(item => item.Id == snipId);
+            if (snip == null) throw new InvalidOperationException("Snip introuvable.");
+            var position = state.Snips.IndexOf(snip);
+            var previousLinks = state.CellLinks;
+            var entry = new AuditEventRecord { Actor = actor ?? "", Action = "SnipDeleted", EntityType = "Snip", EntityId = snipId,
+                Details = snip.WorksheetName + "!" + snip.CellAddress };
+            state.Snips.RemoveAt(position);
+            state.CellLinks = previousLinks.Select(link => new CellLinkRecord { WorksheetName = link.WorksheetName, WorksheetCodeName = link.WorksheetCodeName,
+                CellAddress = link.CellAddress, SnipIds = link.SnipIds.Where(id => id != snipId).ToList() }).Where(link => link.SnipIds.Count > 0).ToList();
+            state.AuditTrail.Add(entry);
+            try { store.Save(state); }
+            catch { state.Snips.Insert(position, snip); state.CellLinks = previousLinks; state.AuditTrail.Remove(entry); throw; }
+        }
+
+        // Selection-scoped deletion: shared proofs survive while another cell references them.
+        public int DeleteCellLinks(ProjectState state,IEnumerable<CellLinkRecord> selection,string actor)
+        {
+            var selected=selection.ToList();
+            var affected=new HashSet<string>(selected.SelectMany(link=>link.SnipIds));
+            var previousLinks=state.CellLinks;var previousSnips=state.Snips;
+            Func<CellLinkRecord,string> key=link=>(string.IsNullOrEmpty(link.WorksheetCodeName)?"name:"+link.WorksheetName:"code:"+link.WorksheetCodeName)+"!"+link.CellAddress;
+            var selectedKeys=new HashSet<string>(selected.Select(key));
+            var remaining=previousLinks.Where(link=>!selectedKeys.Contains(key(link))).ToList();
+            var retained=new HashSet<string>(remaining.SelectMany(link=>link.SnipIds));
+            var removed=previousSnips.Where(s=>affected.Contains(s.Id) && !retained.Contains(s.Id)).ToList();
+            var entry=new AuditEventRecord {Actor=actor??"",Action="CellProofsDeleted",EntityType="Selection",
+                Details=selected.Count+" cells; "+removed.Count+" unreferenced snips removed"};
+            state.CellLinks=remaining;state.Snips=previousSnips.Except(removed).ToList();state.AuditTrail.Add(entry);
+            try {store.Save(state);return removed.Count;}
+            catch {state.CellLinks=previousLinks;state.Snips=previousSnips;state.AuditTrail.Remove(entry);throw;}
+        }
+
+        public void UpdateGeometry(ProjectState state,string id,NormalizedRectangle rectangle,string rawText,string actor,Action<SnipRecord> applyCells=null)
+        {
+            var snip=state.Snips.FirstOrDefault(s=>s.Id==id) ?? throw new InvalidOperationException("Snip introuvable.");
+            var value=parser.Parse(snip.Type,rawText);
+            var oldRectangle=new NormalizedRectangle(snip.X,snip.Y,snip.Width,snip.Height);
+            var oldText=snip.RawText;var oldValue=snip.ExtractedValue;var oldStatus=snip.Status;
+            var oldReviewer=snip.ReviewedBy;var oldReviewDate=snip.ReviewedAtUtc;
+            var entry=new AuditEventRecord {Actor=actor??"",Action="SnipResized",EntityType="Snip",EntityId=id};
+            snip.X=rectangle.X;snip.Y=rectangle.Y;snip.Width=rectangle.Width;snip.Height=rectangle.Height;
+            snip.RawText=rawText;snip.ExtractedValue=value;snip.Status=ReviewStatus.Prepared;snip.ReviewedBy="";snip.ReviewedAtUtc=null;
+            state.AuditTrail.Add(entry);
+            try{applyCells?.Invoke(snip);store.Save(state);}
+            catch
+            {
+                snip.X=oldRectangle.X;snip.Y=oldRectangle.Y;snip.Width=oldRectangle.Width;snip.Height=oldRectangle.Height;
+                snip.RawText=oldText;snip.ExtractedValue=oldValue;snip.Status=oldStatus;snip.ReviewedBy=oldReviewer;snip.ReviewedAtUtc=oldReviewDate;
+                state.AuditTrail.Remove(entry);throw;
+            }
         }
 
         public void SetReview(
@@ -72,7 +135,8 @@ namespace Doctracker.Core.Services
             string snipId,
             ReviewStatus status,
             string comment,
-            string actor)
+            string actor,
+            Action<SnipRecord> applyMetadata = null)
         {
             if (state == null) throw new ArgumentNullException(nameof(state));
             if (string.IsNullOrWhiteSpace(snipId))
@@ -81,10 +145,14 @@ namespace Doctracker.Core.Services
             var snip = state.Snips.FirstOrDefault(item => item.Id == snipId);
             if (snip == null) throw new InvalidOperationException("Snip not found.");
 
+            var oldStatus = snip.Status;
+            var oldComment = snip.Comment;
+            var oldReviewer = snip.ReviewedBy;
+            var oldDate = snip.ReviewedAtUtc;
             snip.Status = status;
             snip.Comment = comment ?? string.Empty;
-            snip.ReviewedBy = actor ?? string.Empty;
-            snip.ReviewedAtUtc = DateTime.UtcNow;
+            snip.ReviewedBy = status == ReviewStatus.Prepared ? string.Empty : actor ?? string.Empty;
+            snip.ReviewedAtUtc = status == ReviewStatus.Prepared ? (DateTime?)null : DateTime.UtcNow;
             state.AuditTrail.Add(new AuditEventRecord
             {
                 Actor = actor ?? string.Empty,
@@ -93,7 +161,14 @@ namespace Doctracker.Core.Services
                 EntityId = snip.Id,
                 Details = status + ": " + snip.Comment
             });
-            store.Save(state);
+            try { applyMetadata?.Invoke(snip); store.Save(state); }
+            catch
+            {
+                state.AuditTrail.RemoveAt(state.AuditTrail.Count - 1);
+                snip.Status = oldStatus; snip.Comment = oldComment;
+                snip.ReviewedBy = oldReviewer; snip.ReviewedAtUtc = oldDate;
+                throw;
+            }
         }
     }
 }

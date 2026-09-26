@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $packageDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -92,6 +92,10 @@ if ($null -eq $trustedRoot -or $null -eq $trustedPublisher) {
 }
 
 Write-Host ""
+$ocrSettingsScript = Join-Path $packageDirectory "Ocr-Settings.ps1"
+if (-not (Test-Path -LiteralPath $ocrSettingsScript)) { throw "Ocr-Settings.ps1 est absent du ZIP. Extrayez tous les fichiers." }
+. $ocrSettingsScript
+$ocrWorkerCount = Request-DoctrackerOcrWorkers
 Write-Host "Certificat approuve. Lancement de l'installateur..." -ForegroundColor Green
 $process = Start-Process -FilePath $setupPath -WorkingDirectory $packageDirectory -Wait -PassThru
 if ($process.ExitCode -ne 0) {
@@ -99,4 +103,9 @@ if ($process.ExitCode -ne 0) {
 }
 
 Write-Host ""
+try {
+    Save-DoctrackerOcrWorkers $ocrWorkerCount
+} catch {
+    Write-Warning "L'installateur s'est termine, mais le choix des moteurs OCR n'a pas pu etre enregistre. Reglez-le dans Doctracker > Reglages OCR. Detail : $($_.Exception.GetBaseException().Message)"
+}
 Write-Host "Installation terminee. Fermez puis rouvrez Excel." -ForegroundColor Green

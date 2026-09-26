@@ -32,7 +32,7 @@
     <UpdateEnabled>false</UpdateEnabled>
     <TargetCulture>fr-FR</TargetCulture>
     <FallbackCulture>en-US</FallbackCulture>
-    <ApplicationVersion>0.2.0.0</ApplicationVersion>
+    <ApplicationVersion>0.9.9.0</ApplicationVersion>
     <ApplicationRevision>0</ApplicationRevision>
     <BootstrapperEnabled>true</BootstrapperEnabled>
   </PropertyGroup>
@@ -106,14 +106,33 @@
     </Compile>
     <Compile Include="Ribbon\DoctrackerRibbon.cs" />
     <Compile Include="Excel\ExcelCellGateway.cs" />
+    <Compile Include="Excel\ExcelProofLinks.cs" />
     <Compile Include="Infrastructure\WorkbookProjectContext.cs" />
     <Compile Include="Infrastructure\TesseractOcrEngine.cs" />
+    <Compile Include="Infrastructure\IsolatedOcrEngine.cs" />
+    <Compile Include="Infrastructure\OcrWorkerEntry.cs" />
     <Compile Include="Infrastructure\DocumentIndexer.cs" />
+    <Compile Include="Infrastructure\OcrSettings.cs" />
+    <Compile Include="Infrastructure\DiagnosticLog.cs" />
+    <Compile Include="Infrastructure\UiTask.cs" />
+    <Compile Include="Infrastructure\WorksheetKeyboardFocus.cs" />
     <Compile Include="Infrastructure\NativePdfiumLoader.cs" />
+    <Compile Include="Infrastructure\ExcelWorkbookParts.cs" />
+    <Compile Include="Infrastructure\AnnotatedPdfExporter.cs" />
+    <Compile Include="UI\ProjectActions.cs" />
+    <Compile Include="UI\FolderOrganizer.cs" />
+    <Compile Include="UI\OcrSelectionDialog.cs" />
+    <Compile Include="UI\AnnotationActions.cs" />
+    <Compile Include="UI\DocumentOverlay.cs" />
+    <Compile Include="Infrastructure\WordDocumentImporter.cs" />
+    <Compile Include="UI\SnipTheme.cs" />
+    <Compile Include="UI\WorkspaceView.cs" />
     <Compile Include="UI\DocumentCanvas.cs" />
+    <Compile Include="UI\TableGridOverlay.cs" />
     <Compile Include="UI\DoctrackerPaneControl.cs" />
     <Compile Include="UI\PaneController.cs" />
     <Compile Include="UI\ReviewDialog.cs" />
+    <Compile Include="UI\TablePreviewDialog.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="ThisAddIn.Designer.xml">
@@ -132,6 +151,7 @@
     <PackageReference Include="PdfiumViewer" Version="2.13.0" />
     <PackageReference Include="PdfiumViewer.Native.x86_64.v8-xfa" Version="2018.4.8.256" />
     <PackageReference Include="PdfiumViewer.Native.x86.v8-xfa" Version="2018.4.8.256" />
+    <PackageReference Include="PDFsharp-GDI" Version="6.2.0" />
     <PackageReference Include="Tesseract" Version="5.2.0" />
   </ItemGroup>
   <ItemGroup>
@@ -164,6 +184,27 @@
     <Error
       Condition="!Exists('$(TargetDir)Microsoft.Office.Tools.Common.v4.0.Utilities.dll')"
       Text="La dépendance Microsoft.Office.Tools.Common.v4.0.Utilities.dll n'a pas été copiée dans $(TargetDir). La tâche VSTO FindRibbons ne peut pas charger l'add-in." />
+  </Target>
+  <Target Name="BuildIsolatedOcrWorkers" BeforeTargets="AssignTargetPaths">
+    <MakeDir Directories="$(IntermediateOutputPath)" />
+    <Csc Sources="$(ProjectDir)Infrastructure\OcrWorkerBootstrap.cs"
+         OutputAssembly="$(IntermediateOutputPath)Doctracker.OcrWorker.x86.exe" TargetType="Exe" Platform="x86" Optimize="true" />
+    <Csc Sources="$(ProjectDir)Infrastructure\OcrWorkerBootstrap.cs"
+         OutputAssembly="$(IntermediateOutputPath)Doctracker.OcrWorker.x64.exe" TargetType="Exe" Platform="x64" Optimize="true" />
+    <ItemGroup>
+      <Content Include="$(IntermediateOutputPath)Doctracker.OcrWorker.x86.exe">
+        <Link>Doctracker.OcrWorker.x86.exe</Link>
+        <TargetPath>Doctracker.OcrWorker.x86.exe</TargetPath>
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <PublishState>Include</PublishState>
+      </Content>
+      <Content Include="$(IntermediateOutputPath)Doctracker.OcrWorker.x64.exe">
+        <Link>Doctracker.OcrWorker.x64.exe</Link>
+        <TargetPath>Doctracker.OcrWorker.x64.exe</TargetPath>
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <PublishState>Include</PublishState>
+      </Content>
+    </ItemGroup>
   </Target>
   <Target Name="EnsureOcrAssets" BeforeTargets="AssignTargetPaths">
     <Exec
