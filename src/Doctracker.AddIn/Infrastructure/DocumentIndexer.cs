@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Text.RegularExpressions;
 using Doctracker.Core.Models;
 using Doctracker.Core.Services;
@@ -16,9 +18,23 @@ namespace Doctracker.AddIn.Infrastructure
     {
         private readonly ProjectStore store;
         private readonly IOcrEngine ocr;
-        public DocumentIndexer(ProjectStore store, IOcrEngine ocr) { this.store = store; this.ocr = ocr; }
-
-        public void Index(ProjectState state, DocumentRecord document, Action<int, int> progress, CancellationToken cancellation, bool forceOcr = false, bool allowOcr = true)
+        public int WorkerCount {get;set;}=OcrSettings.LoadWorkers();
+        public DocumentIndexer(ProjectStore store, IOcrEngine ocr) { this.store=store;this.ocr=ocr; }
+        private sealed class Plan : IDisposable
+        {
+            public DocumentRecord Document;
+            public string Path;
+            public List<PageTextRecord> Pages,OldPages;
+            public List<int> Pending;
+            public bool RequiresOcr;
+            public int Reported,Recognized;
+            public Exception Failure;
+            public CancellationTokenSource Cancellation;
+            public readonly object Sync=new object();
+            public void Dispose()=>Cancellation.Dispose();
+        }
+        private sealed class Job {public Plan Plan;public List<int> Pages;}
+        private Plan Prepare(DocumentRecord document,Action<int,int> progress,CancellationToken cancellation,bool forceOcr,bool allowOcr)
         {
             var path = store.ResolveDocumentPath(document);
             // Build separately: a failed/cancelled re-index must not erase the previous index.
@@ -81,57 +97,123 @@ namespace Doctracker.AddIn.Infrastructure
                     }
                 }
             }
-            // Bound each lot's text memory and keep rasterization outside Excel.
-            // No PNG roundtrip, no native engine reload between pages of the same lot.
-            for(var offset=0;offset<pendingOcr.Count;offset+=16)
+            return new Plan {Document=document,Path=path,Pages=pages,OldPages=oldPages,Pending=pendingOcr,RequiresOcr=requiresOcr,
+                Reported=pages.Count-pendingOcr.Count,Cancellation=CancellationTokenSource.CreateLinkedTokenSource(cancellation)};
+        }
+        private void Recognize(IReadOnlyList<Plan> plans,Action<string,int,int> progress,CancellationToken cancellation)
+        {
+            var workers=Math.Max(1,Math.Min(16,WorkerCount));
+            var jobs=new List<Job>();
+            foreach(var plan in plans)
             {
-                cancellation.ThrowIfCancellationRequested();
-                var batch=pendingOcr.Skip(offset).Take(16).ToList();
-                progress?.Invoke(pages.Count-pendingOcr.Count+offset,pages.Count);
-                var completed=pages.Count-pendingOcr.Count+offset;
-                var recognized=isolated.RecognizePages(path,batch,number=>progress?.Invoke(completed+batch.IndexOf(number)+1,pages.Count),cancellation);
-                foreach(var page in recognized)pages[page.PageNumber-1]=page;
+                // Share a small document among workers too, without one launch per page on large PDFs.
+                var size=Math.Min(8,Math.Max(1,(int)Math.Ceiling(plan.Pending.Count/(double)workers)));
+                for(var i=0;i<plan.Pending.Count;i+=size)jobs.Add(new Job {Plan=plan,Pages=plan.Pending.Skip(i).Take(size).ToList()});
             }
+            if(jobs.Count==0)return;
+            DiagnosticLog.Write("ParallelOcrStart workers="+Math.Min(workers,jobs.Count)+" jobs="+jobs.Count);
+            var timer=Stopwatch.StartNew();
+            try
+            {
+                Parallel.ForEach(jobs,new ParallelOptions {MaxDegreeOfParallelism=workers,CancellationToken=cancellation},job=>{
+                    var plan=job.Plan;
+                    if(plan.Cancellation.IsCancellationRequested)return;
+                    try
+                    {
+                        using(var engine=((IsolatedOcrEngine)ocr).CreateBatchEngine())
+                        {
+                            var pages=engine.RecognizePages(plan.Path,job.Pages,number=>{
+                                lock(plan.Sync)progress?.Invoke(plan.Document.OriginalName,++plan.Reported,plan.Pages.Count);
+                            },plan.Cancellation.Token);
+                            lock(plan.Sync)
+                            {
+                                foreach(var page in pages)plan.Pages[page.PageNumber-1]=page;
+                                plan.Recognized+=pages.Count;
+                            }
+                        }
+                    }
+                    catch(OperationCanceledException) when(plan.Cancellation.IsCancellationRequested) { }
+                    catch(Exception failure)
+                    {
+                        lock(plan.Sync){if(plan.Failure==null)plan.Failure=failure;}
+                        plan.Cancellation.Cancel(); // Cancel siblings for this document, not unrelated documents.
+                    }
+                });
+            }
+            finally {DiagnosticLog.Write("ParallelOcrEnd elapsedMs="+timer.ElapsedMilliseconds);}
             cancellation.ThrowIfCancellationRequested();
-            var oldCount = document.PageCount;
-            var oldComplete = document.IndexComplete;
-            var oldError = document.IndexError;
-            document.IndexedPages = pages;
-            document.PageCount = pages.Count;
-            document.IndexComplete = !requiresOcr;
-            document.IndexError = "";
-            var entry = new AuditEventRecord { Actor = Environment.UserName, Action = requiresOcr ? "NativeTextPrepared" : "DocumentIndexed",
-                EntityType = "Document", EntityId = document.Id, Details = pages.Count + " page(s)" };
+        }
+        private void Commit(ProjectState state,Plan plan)
+        {
+            if(plan.Failure!=null)throw new InvalidOperationException("Reconnaissance interrompue pour ce document.",plan.Failure);
+            if(plan.Recognized!=plan.Pending.Count)throw new OperationCanceledException();
+            var document=plan.Document;
+            var oldCount=document.PageCount;var oldComplete=document.IndexComplete;var oldError=document.IndexError;
+            document.IndexedPages=plan.Pages;document.PageCount=plan.Pages.Count;document.IndexComplete=!plan.RequiresOcr;document.IndexError="";
+            var entry=new AuditEventRecord {Actor=Environment.UserName,Action=plan.RequiresOcr?"NativeTextPrepared":"DocumentIndexed",
+                EntityType="Document",EntityId=document.Id,Details=plan.Pages.Count+" page(s)"};
             state.AuditTrail.Add(entry);
-            try { store.Save(state, createRecoveryCheckpoint: false); document.ReleaseIndex(); }
+            var timer=Stopwatch.StartNew();
+            try {store.Save(state,createRecoveryCheckpoint:false);document.ReleaseIndex();}
             catch
             {
-                document.IndexedPages = oldPages; document.PageCount = oldCount;
-                document.IndexComplete = oldComplete; document.IndexError = oldError;
-                state.AuditTrail.Remove(entry);
-                throw;
+                document.IndexedPages=plan.OldPages;document.PageCount=oldCount;document.IndexComplete=oldComplete;document.IndexError=oldError;
+                state.AuditTrail.Remove(entry);throw;
+            }
+            finally{DiagnosticLog.Write("IndexSave elapsedMs="+timer.ElapsedMilliseconds);}
+        }
+        public void Index(ProjectState state,DocumentRecord document,Action<int,int> progress,CancellationToken cancellation,bool forceOcr=false,bool allowOcr=true)
+        {
+            using(var plan=Prepare(document,progress,cancellation,forceOcr,allowOcr))
+            {
+                Recognize(new[]{plan},(name,page,count)=>progress?.Invoke(page,count),cancellation);
+                cancellation.ThrowIfCancellationRequested();Commit(state,plan);
             }
         }
-
-        public List<string> IndexMissing(ProjectState state, Action<string, int, int> progress, CancellationToken cancellation, IEnumerable<DocumentRecord> scope = null, bool retryFailed = true, bool forceReindex = false, bool allowOcr = true)
+        public List<string> IndexMissing(ProjectState state,Action<string,int,int> progress,CancellationToken cancellation,IEnumerable<DocumentRecord> scope=null,bool retryFailed=true,bool forceReindex=false,bool allowOcr=true)
         {
-            var errors = new List<string>();
-            var changed = false;
-            foreach (var document in (scope ?? state.Documents).ToList())
+            var errors=new List<string>();var changed=false;
+            var documents=(scope??state.Documents).ToList();
+            // Only this coordinator accesses ProjectStore and ProjectState. OCR workers
+            // exchange detached page results; they never save or use Excel COM objects.
+            var width=allowOcr && ocr is IsolatedOcrEngine?Math.Max(1,Math.Min(16,WorkerCount)):1;
+            try
             {
-                cancellation.ThrowIfCancellationRequested();
-                if (!retryFailed && !string.IsNullOrEmpty(document.IndexError))
-                { errors.Add(document.OriginalName + " : " + document.IndexError); continue; }
-                if(!forceReindex && store.ValidateIndex(document))continue;
-                try { Index(state, document, (page, count) => progress?.Invoke(document.OriginalName, page, count), cancellation, allowOcr: allowOcr); }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception exception)
+                for(var offset=0;offset<documents.Count;offset+=width)
                 {
-                    document.IndexError = exception.Message; changed = true;
-                    errors.Add(document.OriginalName + " : " + exception.Message);
+                    cancellation.ThrowIfCancellationRequested();
+                    var plans=new List<Plan>();
+                    try
+                    {
+                        foreach(var document in documents.Skip(offset).Take(width))
+                        {
+                            cancellation.ThrowIfCancellationRequested();
+                            if(!retryFailed && !string.IsNullOrEmpty(document.IndexError)){errors.Add(document.OriginalName+" : "+document.IndexError);continue;}
+                            if(!forceReindex && store.ValidateIndex(document))continue;
+                            try
+                            {
+                                var timer=Stopwatch.StartNew();
+                                plans.Add(Prepare(document,(page,count)=>progress?.Invoke(document.OriginalName,page,count),cancellation,false,allowOcr));
+                                DiagnosticLog.Write("IndexPrepare elapsedMs="+timer.ElapsedMilliseconds);
+                            }
+                            catch(OperationCanceledException){throw;}
+                            catch(Exception failure){document.IndexError=failure.Message;changed=true;errors.Add(document.OriginalName+" : "+failure.Message);}
+                        }
+                        try {Recognize(plans,progress,cancellation);}
+                        catch(OperationCanceledException) when(cancellation.IsCancellationRequested) { /* Commit completed documents below, never partial ones. */ }
+                        foreach(var plan in plans)
+                        {
+                            if(plan.Failure==null && plan.Recognized!=plan.Pending.Count)continue;
+                            try {Commit(state,plan);}
+                            catch(Exception failure)
+                            {plan.Document.IndexError=failure.Message;changed=true;errors.Add(plan.Document.OriginalName+" : "+failure.Message);}
+                        }
+                        cancellation.ThrowIfCancellationRequested();
+                    }
+                    finally {foreach(var plan in plans)plan.Dispose();}
                 }
             }
-            if (changed) store.Save(state, createRecoveryCheckpoint: false);
+            finally {if(changed)store.Save(state,createRecoveryCheckpoint:false);}
             return errors;
         }
 

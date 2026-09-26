@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.Diagnostics;
 using System.Collections.Generic;
 using System.Linq;
 using System.Drawing.Imaging;
@@ -70,8 +71,9 @@ namespace Doctracker.AddIn.Infrastructure
                         {
                             if(number>pdf.PageCount)throw new InvalidDataException();
                             var size=DocumentIndexer.RenderSize(pdf.PageSizes[number-1]);
+                            var rendering=Stopwatch.StartNew();
                             using(var rendered=pdf.Render(number-1,size.Width,size.Height,144,144,PdfRenderFlags.Annotations))
-                            using(var bitmap=new Bitmap(rendered))AddPage(result,engine,bitmap,number);
+                            using(var bitmap=new Bitmap(rendered)){Console.Out.WriteLine("WorkerRenderMs "+rendering.ElapsedMilliseconds);AddPage(result,engine,bitmap,number);}
                         }
                     }
                 }
@@ -92,7 +94,9 @@ namespace Doctracker.AddIn.Infrastructure
         }
         private static void AddPage(OcrBatchResult result,TesseractOcrEngine engine,Bitmap bitmap,int number)
         {
+            var timer=Stopwatch.StartNew();
             var page=engine.Recognize(bitmap);page.PageNumber=number;
+            Console.Out.WriteLine("WorkerRecognitionMs "+timer.ElapsedMilliseconds);
             page.Text=Clean(page.Text);foreach(var word in page.Words)word.Text=Clean(word.Text);
             result.Pages.Add(page);Console.Out.WriteLine("WorkerPageReady "+number);
         }

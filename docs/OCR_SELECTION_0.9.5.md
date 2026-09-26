@@ -34,4 +34,5 @@ Le journal `session-18768.log` (0.9.4) montre des snips terminés mais aucune ex
 - Suite .NET 8 sous Linux : **163 succès / 165 tests**. Les cinq nouveaux tests passent.
 - Deux tests d'injection d'échec par `FileShare.None` échouent parce que le remplacement du fichier ne déclenche pas l'exception attendue. Les deux mêmes échecs ont été reproduits sur le commit 0.9.4 `fea4846`, dans un checkout séparé, sans modifier les tests.
 - Analyse syntaxique Roslyn : 64 fichiers C#, aucune erreur de syntaxe. Cette analyse ne remplace pas la compilation VSTO ni les essais Windows.
-- Envoi vers `ismaelfofana1998-cloud/Doctracker-V0.2.0`, branche `fix/excel-audit-workflows`, bloqué par le contrôle automatique d'autorisation : accord explicite demandé avant transmission du code. Aucun installateur 0.9.5 n'a été produit à ce stade.
+- Après autorisation explicite, la version 0.9.5 a été envoyée sur `fix/excel-audit-workflows`. Le run Windows `36196035654` a réussi : 165 tests du cœur, tests x86/x64 et installateur produit.
+- La version 0.9.6 ajoute le parallélisme et remplace le rejet d'ambiguïté par le premier résultat texte ; voir `OCR_PARALLELE_0.9.6.md`.

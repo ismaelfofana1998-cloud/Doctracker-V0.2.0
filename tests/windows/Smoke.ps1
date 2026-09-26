@@ -462,6 +462,45 @@ public static class HeartbeatChild {
     $scanScope=[Collections.Generic.List[Doctracker.Core.Models.DocumentRecord]]::new();$scanScope.Add($scanDoc)
     $indexer.IndexMissing($scanState,$null,[Threading.CancellationToken]::None,$scanScope,$true,$false,$true) | Out-Null
     if($scanDoc.IndexKey -ne $scanKey){throw 'Prepared document was recognized a second time.'}
+    # Use real isolated child processes to prove concurrency, rollback and cancellation.
+    $fakePoolRoot=Join-Path $temp 'pool-worker';[void][IO.Directory]::CreateDirectory($fakePoolRoot)
+    $fakePoolWorker=Join-Path $fakePoolRoot 'parallel-worker.exe'
+    Add-Type -Path (Join-Path $PSScriptRoot 'ParallelFakeWorker.cs') -OutputAssembly $fakePoolWorker -OutputType ConsoleApplication -ReferencedAssemblies 'System.Xml.dll','System.Core.dll'
+    Add-Type -Path (Join-Path $PSScriptRoot 'ParallelOcrProbe.cs') -ReferencedAssemblies (Join-Path $root 'Doctracker.Core.dll'),'System.Drawing.dll','System.Core.dll'
+    Write-Host ([ParallelOcrProbe]::Run($assembly,$temp,$multiPath,$fakePoolWorker))
+    if(@(Get-ChildItem $workRoot -Directory | Where-Object {$_.Name -notin $beforeWork}).Count -ne 0){throw 'Parallel pool leaked temporary work folders.'}
+    # Also run the actual PDFium/Tesseract workers in parallel, including indexed word boxes.
+    $parallelDoc=$importer.Import($state,$multiPath,'parallel-real')
+    $indexer.WorkerCount=2
+    $watch.Restart()
+    $indexer.Index($state,$parallelDoc,$null,[Threading.CancellationToken]::None,$true,$true)
+    if(!$parallelDoc.IndexComplete -or $parallelDoc.IndexedPages.Count -ne 30){throw 'Real parallel OCR did not index all PDF pages.'}
+    for($i=0;$i -lt 30;$i++) {
+        $page=$parallelDoc.IndexedPages[$i]
+        if($page.PageNumber -ne $i+1 -or $page.Text -notmatch 'PAGE' -or $page.Words.Count -eq 0){throw 'Parallel OCR lost page order, text or word coordinates.'}
+    }
+    Write-Host ('PASS: actual parallel PDF OCR, 30 pages, two workers; elapsed_ms='+$watch.ElapsedMilliseconds)
+    . (Join-Path $PSScriptRoot '../../installer/Ocr-Settings.ps1')
+    foreach($spec in @(@(12,16),@(12,8),@(2,16),@(32,64),@(12,0))) {
+        $advice=Get-DoctrackerOcrAdvice $spec[0] $spec[1]
+        if($advice.Recommended -ne [Doctracker.Core.Services.OcrConcurrencyPolicy]::Recommended($spec[0],$spec[1]) -or $advice.Maximum -ne [Doctracker.Core.Services.OcrConcurrencyPolicy]::Maximum($spec[0])){throw 'Installer and add-in OCR advice differ.'}
+    }
+    $settingsType=$assembly.GetType('Doctracker.AddIn.Infrastructure.OcrSettings',$true)
+    $settingsFlags=[Reflection.BindingFlags]'Public,NonPublic,Static'
+    $settingsPath=$settingsType.GetProperty('SettingsPath',$settingsFlags).GetValue($null,$null)
+    $previousSettings=if(Test-Path $settingsPath){[IO.File]::ReadAllBytes($settingsPath)}else{$null}
+    try {
+        Save-DoctrackerOcrWorkers 1
+        if($settingsType.GetMethod('LoadWorkers',$settingsFlags).Invoke($null,@()) -ne 1){throw 'Installer worker choice was not loaded by the add-in.'}
+        $settingsType.GetMethod('SaveWorkers',$settingsFlags).Invoke($null,[object[]]@(2))
+        $expected=[Doctracker.Core.Services.OcrConcurrencyPolicy]::Clamp(2,[Environment]::ProcessorCount)
+        if([int][IO.File]::ReadAllText($settingsPath) -ne $expected){throw 'Ribbon worker setting was not persisted.'}
+        [IO.File]::WriteAllText($settingsPath,'invalid')
+        if($settingsType.GetMethod('LoadWorkers',$settingsFlags).Invoke($null,@()) -ne $settingsType.GetProperty('Recommended',$settingsFlags).GetValue($null,$null)){throw 'Invalid worker settings did not fall back to advice.'}
+    } finally {
+        if($null -ne $previousSettings){[IO.File]::WriteAllBytes($settingsPath,$previousSettings)}else{Remove-Item $settingsPath -ErrorAction SilentlyContinue}
+    }
+    Write-Host 'PASS: hardware advice, installer choice, persisted worker count and invalid setting recovery'
     # Verify real checked selection survives changing folder, then clears only visible rows.
     $selectionState=[Doctracker.Core.Models.ProjectState]::new()
     foreach($entry in @(@{Name='BL 01.pdf';Folder='BL'},@{Name='BL 02.pdf';Folder='BL / 2026'},@{Name='Facture 03.pdf';Folder='Factures'})) {

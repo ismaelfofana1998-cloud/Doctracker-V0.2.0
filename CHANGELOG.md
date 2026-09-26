@@ -1,3 +1,10 @@
+# 0.9.6 — OCR parallèle et matching texte
+
+- Moteurs OCR simultanés configurables à l'installation et dans le ruban, avec conseil selon le processeur et la RAM.
+- Répartition des pages d'un PDF entre plusieurs moteurs, résultats ordonnés et sauvegarde séquentielle.
+- Matching automatique : premier résultat texte, sans rejet d'ambiguïté ni interprétation montant/date.
+- Détails et limites : `docs/OCR_PARALLELE_0.9.6.md`.
+
 # 0.9.5 — OCR sélectionné et traitement groupé
 
 - Bouton OCR, sélection multiple et traitement par dossier.

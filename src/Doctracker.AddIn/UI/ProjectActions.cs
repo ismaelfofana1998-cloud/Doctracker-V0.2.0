@@ -27,6 +27,7 @@ namespace Doctracker.AddIn.UI
                     case "TestReference": ChangeTestReference();break;
                     case "ReindexOcr": ReindexOcrAsync();break;
                     case "OcrDocuments": RecognizeDocumentsAsync();break;
+                    case "OcrSettings": ConfigureOcrWorkers();break;
                     case "DeleteSnip": DeleteSnipFromSelection();break;
                     case "DeleteSelectionSnips": DeleteSelectionSnips();break;
                     case "ImportFolder": ImportFolderAsync();break;
@@ -44,6 +45,19 @@ namespace Doctracker.AddIn.UI
                 }
             }
             catch(Exception exception){ShowError(exception);}
+        }
+        private void ConfigureOcrWorkers()
+        {
+            using(var dialog=new Form {Text="Reconnaissances simultanées",ClientSize=new Size(540,225),StartPosition=FormStartPosition.CenterParent,
+                Font=new Font("Segoe UI",10),Padding=new Padding(14),MinimizeBox=false,MaximizeBox=false})
+            {
+                var note=new Label {Dock=DockStyle.Top,Height=125,Text=Environment.ProcessorCount+" processeurs logiques · "+OcrSettings.MemoryGb.ToString("0.0")+" Go de RAM\n"+
+                    "Conseil : "+OcrSettings.Recommended+" moteurs pour commencer.\nDavantage de moteurs peut ralentir Excel ou chauffer le PC.\nLe changement s’applique au prochain traitement OCR."};
+                var input=new NumericUpDown {Minimum=1,Maximum=OcrSettings.Maximum,Value=OcrSettings.LoadWorkers(),Dock=DockStyle.Top,AccessibleName="Nombre de moteurs OCR"};
+                var ok=new Button {Text="Enregistrer",AutoSize=true,Dock=DockStyle.Bottom,DialogResult=DialogResult.OK};
+                dialog.Controls.Add(input);dialog.Controls.Add(note);dialog.Controls.Add(ok);dialog.AcceptButton=ok;
+                if(dialog.ShowDialog(this)==DialogResult.OK){OcrSettings.SaveWorkers((int)input.Value);SetStatus(input.Value+" moteur(s) OCR au prochain traitement.");}
+            }
         }
         private async void RecognizeDocumentsAsync(string[] ids=null)
         {

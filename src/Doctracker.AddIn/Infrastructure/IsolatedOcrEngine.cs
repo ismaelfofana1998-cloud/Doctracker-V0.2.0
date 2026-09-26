@@ -20,6 +20,8 @@ namespace Doctracker.AddIn.Infrastructure
         private readonly int timeoutMilliseconds;
         private Process active;
         private bool disposed;
+        private bool batchEngine;
+        internal IsolatedOcrEngine CreateBatchEngine()=>new IsolatedOcrEngine(workerOverride,timeoutMilliseconds) {batchEngine=true};
         public CancellationToken Cancellation {get;set;}
         public IsolatedOcrEngine():this(null,90000){}
         // Dependency injection also permits testing child failure without crashing Excel.
@@ -73,6 +75,7 @@ namespace Doctracker.AddIn.Infrastructure
                     Arguments=Quote(input)+" "+Quote(output)+" "+Process.GetCurrentProcess().Id,
                     WorkingDirectory=Path.GetDirectoryName(executable),UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true}})
                 {
+                    if(batchEngine)process.StartInfo.EnvironmentVariables["OMP_THREAD_LIMIT"]="1";
                     process.OutputDataReceived+=(sender,args)=>{
                         if(args.Data!=null && args.Data.StartsWith("WorkerPageReady ") && int.TryParse(args.Data.Substring(16),out var pageNumber) && request.Pages.Contains(pageNumber))
                         {
@@ -80,6 +83,8 @@ namespace Doctracker.AddIn.Infrastructure
                             DiagnosticLog.Write("WorkerPageReady page="+pageNumber);
                             try {progress?.Invoke(pageNumber);}catch { /* Progress must not crash the output reader. */ }
                         }
+                        if(args.Data!=null && (args.Data.StartsWith("WorkerRenderMs ") || args.Data.StartsWith("WorkerRecognitionMs ")) &&
+                            long.TryParse(args.Data.Substring(args.Data.IndexOf(' ')+1),out var milliseconds))DiagnosticLog.Write(args.Data);
                         if(new[]{"WorkerCropStart","WorkerCropReady","WorkerOcrStart","WorkerOcrReady","WorkerResultReady","WorkerFailure"}.Contains(args.Data))DiagnosticLog.Write(args.Data);
                     };
                     process.ErrorDataReceived+=(sender,args)=>{}; // Drain native warnings; never log recognized content.

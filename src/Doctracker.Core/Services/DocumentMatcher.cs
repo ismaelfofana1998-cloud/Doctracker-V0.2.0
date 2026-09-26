@@ -81,6 +81,48 @@ namespace Doctracker.Core.Services
             return result.Select(x=>(IReadOnlyList<MatchCandidate>)x).ToArray();
         }
 
+        // Literal first-hit mode used by automatic matching. The caller supplies document
+        // order; page number and source-text order break ties. No amount/date parsing.
+        public IReadOnlyList<MatchCandidate>[] FindFirstTextBatch(ProjectState state,IReadOnlyList<IReadOnlyList<string>> rows,CancellationToken cancellation)
+        {
+            var result=rows.Select(row=>(IReadOnlyList<MatchCandidate>)new List<MatchCandidate>()).ToArray();
+            var remaining=new HashSet<int>(Enumerable.Range(0,rows.Count).Where(i=>rows[i]!=null && rows[i].Any(q=>OccurrenceSearch.Normalize(q).Length>0)));
+            cancellation.ThrowIfCancellationRequested();
+            foreach(var document in state.Documents)
+            {
+                if(remaining.Count==0)break;
+                try
+                {
+                    foreach(var page in document.IndexedPages.OrderBy(p=>p.PageNumber))
+                    {
+                        cancellation.ThrowIfCancellationRequested();
+                        var prepared=new OccurrenceSearch.PreparedPage(document,page,cancellation);
+                        var cache=new Dictionary<string,MatchCandidate>(StringComparer.Ordinal);
+                        foreach(var row in remaining.ToArray())
+                        {
+                            cancellation.ThrowIfCancellationRequested();
+                            var fields=new List<MatchCandidate>();var matched=true;
+                            foreach(var query in rows[row])
+                            {
+                                var term=OccurrenceSearch.Normalize(query);
+                                if(term.Length==0){fields.Add(null);continue;}
+                                if(!cache.TryGetValue(term,out var hit))
+                                {hit=prepared.Find(new[]{term},cancellation).FirstOrDefault();cache[term]=hit;}
+                                fields.Add(hit);if(hit==null){matched=false;break;}
+                            }
+                            if(!matched)continue;
+                            result[row]=new[]{new MatchCandidate {DocumentId=document.Id,PageNumber=page.PageNumber,Score=1,
+                                IsExact=fields.Where(f=>f!=null).All(f=>f.IsExact),IsPartial=fields.Any(f=>f?.IsPartial==true),Fields=fields}};
+                            remaining.Remove(row);
+                        }
+                        if(remaining.Count==0)break;
+                    }
+                }
+                finally{document.ReleaseIndex();}
+            }
+            return result;
+        }
+
         private MatchCandidate Score(DocumentRecord document, PageTextRecord page, string query, bool partialReferences, OccurrenceSearch.PreparedPage prepared, CancellationToken cancellation)
         {
             var normalizedQuery = Normalize(query);

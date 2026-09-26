@@ -135,6 +135,14 @@ namespace Doctracker.AddIn.Excel
         }
         public string GetSnipId(ExcelInterop.Range target) => GetSnipIds(target).LastOrDefault();
 
+        public static string MatchingText(ExcelInterop.Range cell)
+        {
+            var displayed=Convert.ToString(cell.Text,CultureInfo.CurrentCulture)??"";
+            if(displayed.Length>0 && displayed.All(c=>c=='#'))
+                throw new InvalidOperationException("Une cellule de recherche affiche ###. Élargissez sa colonne pour utiliser son texte affiché.");
+            return displayed;
+        }
+
         public static string QueryText(ExcelInterop.Range cell, bool forSearch = false)
         {
             var value = cell.Value; // preserves VT_DATE when Excel formatted the value as a date
