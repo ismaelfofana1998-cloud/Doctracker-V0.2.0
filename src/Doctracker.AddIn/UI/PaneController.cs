@@ -90,9 +90,11 @@ namespace Doctracker.AddIn.UI
             try
             {
                 var book = application.ActiveWorkbook;
-                if (book == null || IsBusy(book)) return;
+                if (book == null) return;
                 var window = application.ActiveWindow;
                 WindowPane existing;
+                if(window!=null && panes.TryGetValue(window.Hwnd,out existing))existing.Control.SyncSearchFromCell(target);
+                if(IsBusy(book))return;
                 if (target == null || target.Cells.CountLarge != 1 ||
                     new Excel.ExcelCellGateway(application).GetSnipIds(target).Count==0)
                 {
@@ -100,6 +102,7 @@ namespace Doctracker.AddIn.UI
                     return;
                 }
                 var entry = Current(false);
+                entry.Control.SyncSearchFromCell(target);
                 if (entry.Control.TryNavigateFromCell(target)) entry.Pane.Visible = true;
             }
             catch (System.Runtime.InteropServices.COMException) { /* Excel can be editing or closing. */ }

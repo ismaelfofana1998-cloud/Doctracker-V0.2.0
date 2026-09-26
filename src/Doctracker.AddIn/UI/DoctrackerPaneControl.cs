@@ -27,6 +27,7 @@ namespace Doctracker.AddIn.UI
         private readonly DocumentCanvas canvas;
         private readonly ComboBox documents;
         private TextBox searchBox;
+        private readonly CellSearchQuery searchQuery = new CellSearchQuery();
         private readonly ListBox searchResults;
         private readonly Label status;
 
@@ -66,6 +67,8 @@ namespace Doctracker.AddIn.UI
             WireProjectActions();
             documents = view.Documents;
             searchBox = view.Query;
+            searchBox.TextChanged += (sender,args) => searchQuery.Edit(searchBox.Text);
+            searchBox.Enter += (sender,args) => RefreshSearchCell();
             searchResults = view.Results;
             status = view.Status;
             cancelButton = view.Cancel;
@@ -141,6 +144,7 @@ namespace Doctracker.AddIn.UI
             if (context.IsBusy || IsDisposed) return;
             try {
                 EnsureProject();
+                RefreshSearchCell();
                 if (renderedRevision == context.State.Revision) return;
                 RefreshCategories(); BindDocuments(); UpdateDocumentProofs();
                 renderedRevision = context.State.Revision;
@@ -243,50 +247,48 @@ namespace Doctracker.AddIn.UI
                 DiagnosticLog.Write("SnipStart "+type+" page="+pageNumber);
                 BeginOperation();
                 PageTextRecord recognized;
-                if (type == SnipType.Validation || type == SnipType.Exception)
-                    recognized = new PageTextRecord { Text = string.IsNullOrWhiteSpace(ExcelCellGateway.QueryText(target)) ? SnipTheme.LabelFor(type) : ExcelCellGateway.QueryText(target) };
-                else
+                SetStatus("Extraction de la zone…");
+                // Native/indexed words preserve exact text; scan-only pages use the local OCR.
+                recognized = ExtractIndexedSelection(document, pageNumber, rectangle);
+                if (recognized == null && !document.IndexComplete)
                 {
-                    SetStatus("Extraction de la zone…");
-                    // Native/indexed words preserve exact text; scan-only pages use the local OCR.
-                    recognized = ExtractIndexedSelection(document, pageNumber, rectangle);
-                    if (recognized == null && !document.IndexComplete)
-                    {
-                        var path = canvas.CurrentPath;
-                        DiagnosticLog.Write("SnipNativeText");
-                        var native = await Task.Run(() => DocumentIndexer.ReadNativePage(path, pageNumber)).OnUi(this);
-                        operation.Token.ThrowIfCancellationRequested();
-                        recognized = ExtractPageSelection(native, rectangle);
-                    }
-                    if (recognized == null)
-                    {
-                        SetStatus("Reconnaissance du texte dans la zone sélectionnée…");
-                        DiagnosticLog.Write("SnipOcr");
-                        var sourcePath=canvas.CurrentPath;var token=operation.Token;
-                        recognized = await Task.Run(() => ocr.RecognizeRegion(sourcePath,pageNumber,rectangle,type==SnipType.Table,token)).OnUi(this);
-                    }
+                    var path = canvas.CurrentPath;
+                    DiagnosticLog.Write("SnipNativeText");
+                    var native = await Task.Run(() => DocumentIndexer.ReadNativePage(path, pageNumber)).OnUi(this);
+                    operation.Token.ThrowIfCancellationRequested();
+                    recognized = ExtractPageSelection(native, rectangle);
+                }
+                if (recognized == null)
+                {
+                    SetStatus("Reconnaissance du texte dans la zone sélectionnée…");
+                    DiagnosticLog.Write("SnipOcr");
+                    var sourcePath=canvas.CurrentPath;var token=operation.Token;
+                    recognized = await Task.Run(() => ocr.RecognizeRegion(sourcePath,pageNumber,rectangle,type==SnipType.Table,token)).OnUi(this);
                 }
                 operation.Token.ThrowIfCancellationRequested();
                 EnsureActiveWorkbook();
                 var writes = new List<PendingWrite>();
+                var blankTableCells=new List<ExcelInterop.Range>();
                 if (type == SnipType.Table)
                 {
-                    var extracted = LayoutExtractor.Extract(recognized.Words);
-                    if (extracted.Count == 0) throw new InvalidOperationException("Aucun tableau reconnu. Agrandissez la zone.");
-                    var rowCount = extracted.Max(cell => cell.Row) + 1;
-                    var columnCount = extracted.Max(cell => cell.Column) + 1;
-                    if (rowCount * columnCount > 10000) throw new InvalidOperationException("Limitez le tableau à 10 000 cellules.");
-                    if (target.Row + rowCount - 1 > target.Worksheet.Rows.Count || target.Column + columnCount - 1 > target.Worksheet.Columns.Count)
-                        throw new InvalidOperationException("Le tableau dépasse les limites de la feuille.");
-                    using (var preview = new TablePreviewDialog(extracted, rowCount, columnCount))
+                    if(recognized.Words==null || recognized.Words.Count==0)throw new InvalidOperationException("Aucun mot positionné dans cette zone. Agrandissez la sélection.");
+                    using (var preview = new TablePreviewDialog(canvas.CurrentPath,pageNumber,rectangle,recognized.Words))
                     {
-                        if (preview.ShowDialog(this) != DialogResult.OK) return;
+                        if(preview.ShowDialog(this)!=DialogResult.OK)
+                        {
+                            if(preview.Failure!=null)throw new InvalidOperationException("Le tableau n’a pas pu être affiché.",preview.Failure);
+                            return;
+                        }
+                        var rowCount=preview.RowCount;var columnCount=preview.ColumnCount;
+                        var extracted=preview.Cells;
+                        if(target.Row+rowCount-1>target.Worksheet.Rows.Count || target.Column+columnCount-1>target.Worksheet.Columns.Count)
+                            throw new InvalidOperationException("Le tableau dépasse les limites de la feuille.");
                         for (var row = 0; row < rowCount; row++)
                         for (var column = 0; column < columnCount; column++)
                         {
                             var text = preview.ValueAt(row, column);
-                            if (string.IsNullOrWhiteSpace(text)) continue;
-                            var source = extracted.FirstOrDefault(cell => cell.Row == row && cell.Column == column);
+                            if (string.IsNullOrWhiteSpace(text)){blankTableCells.Add((ExcelInterop.Range)target.Offset[row,column]);continue;}
+                            var source = extracted[row*columnCount+column];
                             var zone = source == null ? rectangle : new RectangleF(
                                 rectangle.X + (float)source.X * rectangle.Width, rectangle.Y + (float)source.Y * rectangle.Height,
                                 (float)source.Width * rectangle.Width, (float)source.Height * rectangle.Height);
@@ -300,7 +302,7 @@ namespace Doctracker.AddIn.UI
                     }
                 }
                 else writes.Add(PrepareWrite(target, document, pageNumber, rectangle, type, type==SnipType.Sum?SumSourceText(recognized):recognized.Text));
-                var preserveValue = type == SnipType.Validation || type == SnipType.Exception;
+                if(writes.Count==0)throw new InvalidOperationException("Aucun texte à insérer dans cette zone.");
                 var appendSum = false;
                 if (type == SnipType.Sum)
                 {
@@ -316,14 +318,14 @@ namespace Doctracker.AddIn.UI
                         appendSum = true;
                     }
                 }
-                if (!ConfirmOverwrite(writes, preserveValue || appendSum)) return;
+                if (!ConfirmOverwrite(writes, appendSum,blankTableCells)) return;
                 DiagnosticLog.Write("SnipExcelCommit count="+writes.Count);
-                CommitWrites(writes, preserveValue || appendSum);
+                CommitWrites(writes, appendSum,blankTableCells);
                 DiagnosticLog.Write("SnipCommitted");
                 canvas.ClearSelection();
                 UpdateDocumentProofs();
                 SetStatus(writes.Count + " preuve(s) créée(s). Sélectionnez la prochaine cellule ou dessinez la zone suivante.");
-                if (writes.Count > 0 && !preserveValue && type != SnipType.Sum && writes.Max(w => w.Target.Row) < target.Worksheet.Rows.Count &&
+                if (writes.Count > 0 && type != SnipType.Sum && writes.Max(w => w.Target.Row) < target.Worksheet.Rows.Count &&
                     (application.Selection as ExcelInterop.Range)?.Cells.CountLarge == 1 &&
                     cells.GetSingleTarget().Address[true, true, ExcelInterop.XlReferenceStyle.xlA1, true] ==
                     target.Address[true, true, ExcelInterop.XlReferenceStyle.xlA1, true])
@@ -339,6 +341,7 @@ namespace Doctracker.AddIn.UI
             try
             {
                 var target = cells.GetSingleTarget();
+                SyncSearchFromCell(target);
                 var query = ExcelCellGateway.QueryText(target,true);
                 if (string.IsNullOrWhiteSpace(query))
                     throw new InvalidOperationException("La cellule active est vide.");
@@ -353,8 +356,29 @@ namespace Doctracker.AddIn.UI
 
         public async void SearchFromPane()
         {
+            RefreshSearchCell();
             if(string.IsNullOrWhiteSpace(searchBox.Text)){SearchSelection();return;}
             await SearchDocumentsAsync(searchBox.Text).OnUi(this);
+        }
+
+        public void SyncSearchFromCell(ExcelInterop.Range target)
+        {
+            if(IsDisposed || target==null)return;
+            if(target.Cells.CountLarge!=1){SyncSearchText("selection","");return;}
+            string key=target.Worksheet.CodeName+"!"+target.Address[true,true,ExcelInterop.XlReferenceStyle.xlA1];
+            SyncSearchText(key,ExcelCellGateway.QueryText(target,true));
+        }
+        private void SyncSearchText(string key,string text)
+        {
+            var revision=searchQuery.Revision;
+            searchQuery.FollowCell(key,text);
+            if(searchBox.Text!=searchQuery.Text)searchBox.Text=searchQuery.Text;
+            if(searchQuery.Revision!=revision){searchResults.DataSource=null;view.HideResults();}
+        }
+        private void RefreshSearchCell()
+        {
+            try {if(Equals(application.ActiveWorkbook,workbook))SyncSearchFromCell(application.Selection as ExcelInterop.Range);}
+            catch(System.Runtime.InteropServices.COMException) { /* Excel may still be editing a cell. */ }
         }
 
         private async Task SearchDocumentsAsync(string query)
@@ -364,6 +388,7 @@ namespace Doctracker.AddIn.UI
             {
                 EnsureProject();
                 if (string.IsNullOrWhiteSpace(query)) throw new InvalidOperationException("Saisissez un texte à rechercher.");
+                var queryRevision=searchQuery.Revision;
                 BeginOperation();
                 searchResults.DataSource = null; view.HideResults();
                 var scope=SearchScope();
@@ -373,6 +398,8 @@ namespace Doctracker.AddIn.UI
                     .Select(candidate => new SearchResultItem { Candidate = candidate,
                         Document = context.State.Documents.First(item => item.Id == candidate.DocumentId) }).ToList()).OnUi(this);
                 operation.Token.ThrowIfCancellationRequested();
+                RefreshSearchCell();
+                if(searchQuery.Revision!=queryRevision){SetStatus("La cellule ou la recherche a changé. Relancez la recherche.");return;}
                 var truncated=results.Count>200;if(truncated)results=results.Take(200).ToList();
                 searchResults.DataSource = results;
                 view.ShowResults(results.Count);
@@ -850,10 +877,11 @@ namespace Doctracker.AddIn.UI
             return new PendingWrite { Target = target, Snip = snip, Document = document };
         }
 
-        private bool ConfirmOverwrite(List<PendingWrite> writes, bool preserveValue)
+        private bool ConfirmOverwrite(List<PendingWrite> writes, bool preserveValue,List<ExcelInterop.Range> clear=null)
         {
-            foreach (var write in writes) ExcelCellGateway.ValidateWritable(write.Target);
-            return preserveValue || !writes.Any(write => ExcelCellGateway.HasContent(write.Target)) ||
+            var targets=writes.Select(w=>w.Target).Concat(clear??new List<ExcelInterop.Range>()).ToList();
+            foreach(var target in targets)ExcelCellGateway.ValidateWritable(target);
+            return preserveValue || !targets.Any(ExcelCellGateway.HasContent) ||
                 MessageBox.Show(this, "La destination contient déjà des données. Les remplacer par l'extraction ?", "Confirmer l'insertion",
                     MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
         }

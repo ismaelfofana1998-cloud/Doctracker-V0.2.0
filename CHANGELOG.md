@@ -1,3 +1,10 @@
+# 0.9.7 — Recherche synchronisée, grille sur PDF et anomalies
+
+- La recherche suit la cellule active et conserve les saisies manuelles sur une même cellule.
+- Éditeur de tableau avec grille superposée au PDF : ajouter, déplacer et supprimer les points de séparation avant insertion.
+- Validation et Anomalie extraient le texte source, y compris après déplacement du snip. « Exception » devient « Anomalie » dans l’interface.
+- Détails et limites : `docs/EDITION_0.9.7.md`.
+
 # 0.9.6 — OCR parallèle et matching texte
 
 - Moteurs OCR simultanés configurables à l'installation et dans le ruban, avec conseil selon le processeur et la RAM.

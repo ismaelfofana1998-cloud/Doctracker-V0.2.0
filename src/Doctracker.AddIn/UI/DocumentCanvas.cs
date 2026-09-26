@@ -17,7 +17,7 @@ namespace Doctracker.AddIn.UI
     /// PDF/image surface with a real scrollable zoom surface.
     /// Left drag selects a snip; middle drag pans the zoomed document.
     /// </summary>
-    internal sealed class DocumentCanvas : UserControl
+    internal sealed partial class DocumentCanvas : UserControl
     {
         private readonly Panel viewport;
         // Only this host moves during scrolling; page bounds stay in document coordinates.
@@ -177,7 +177,7 @@ namespace Doctracker.AddIn.UI
             };
             picture.KeyDown+=(s,e)=>{if(e.KeyCode==Keys.Escape)CancelCommentDrag();};
             viewport.KeyDown+=(s,e)=>{if(e.KeyCode==Keys.Escape)CancelCommentDrag();};
-            picture.MouseCaptureChanged+=(s,e)=>{if(!picture.Capture && (commentDragging || proofDragging))CancelCommentDrag();};
+            picture.MouseCaptureChanged+=(s,e)=>{if(!picture.Capture && (commentDragging || proofDragging))CancelCommentDrag();if(!picture.Capture && tableHandle>0){tableHandle=-1;TableChanged();}};
             picture.Paint += PaintPage;
             // Hover must not steal keyboard focus from Excel or the search box.
             MouseEventHandler wheel = (s,e) => {
@@ -362,7 +362,7 @@ namespace Doctracker.AddIn.UI
             {
                 surface.MouseDown+=Picture_MouseDown;surface.MouseMove+=Picture_MouseMove;surface.MouseUp+=Picture_MouseUp;surface.Paint+=PaintPage;
                 surface.MouseDoubleClick+=(s,e)=>{ActivatePage(surface);var comment=CommentAt(e.Location);if(e.Button==MouseButtons.Left && comment!=null){CancelCommentDrag();EditCommentRequested?.Invoke(comment.Id);}};
-                surface.MouseCaptureChanged+=(s,e)=>{if(!surface.Capture && (commentDragging || proofDragging))CancelCommentDrag();};
+                surface.MouseCaptureChanged+=(s,e)=>{if(!surface.Capture && (commentDragging || proofDragging))CancelCommentDrag();if(!surface.Capture && tableHandle>0){tableHandle=-1;TableChanged();}};
                 surface.MouseWheel+=(s,e)=>{
                     if((ModifierKeys & Keys.Control)!=0){SetZoom(zoom*(e.Delta>0?1.15:1/1.15),false);if(e is HandledMouseEventArgs handled)handled.Handled=true;}
                     else if(IsHandleCreated)BeginInvoke(new Action(RefreshVisiblePages));
@@ -453,7 +453,7 @@ namespace Doctracker.AddIn.UI
                 var visible=Enumerable.Range(0,pageBounds.Count).Where(i=>pageBounds[i].Bottom>=top && pageBounds[i].Top<=bottom).ToList();
                 if(visible.Count==0)return;
                 var active=visible.FirstOrDefault(i=>pageBounds[i].Bottom>top+Math.Min(40,viewport.Height/4));
-                if(!dragging && !commentDragging && !proofDragging && !panning)ActivatePage(GetPagePicture(active));
+                if(!dragging && !commentDragging && !proofDragging && !panning && tableHandle<0)ActivatePage(GetPagePicture(active));
                 var keep=new HashSet<int>(visible);keep.Add(pageIndex);
                 foreach(var old in pagePictures.Keys.Where(i=>!keep.Contains(i)).ToList())
                 {
@@ -537,6 +537,7 @@ namespace Doctracker.AddIn.UI
                 return;
             }
 
+            if(TableMouseDown(e))return;
             if (e.Button == MouseButtons.Right)
             {
                 popup.Items.Clear();
@@ -586,6 +587,7 @@ namespace Doctracker.AddIn.UI
         private void Picture_MouseMove(object sender, MouseEventArgs e) => GuardDisplay(()=>Picture_MouseMoveCore(sender,e));
         private void Picture_MouseMoveCore(object sender, MouseEventArgs e)
         {
+            if(!panning && TableMouseMove(e))return;
             if(proofDragging)
             {
                 var box=CommentGeometry.Transform(new NormalizedRectangle(proofOriginal.X,proofOriginal.Y,proofOriginal.Width,proofOriginal.Height),
@@ -622,6 +624,7 @@ namespace Doctracker.AddIn.UI
         private void Picture_MouseUp(object sender, MouseEventArgs e) => GuardDisplay(()=>Picture_MouseUpCore(sender,e));
         private void Picture_MouseUpCore(object sender, MouseEventArgs e)
         {
+            if(e.Button!=MouseButtons.Middle && TableMouseUp(e))return;
             if(proofDragging && e.Button==MouseButtons.Left)
             {
                 var id=selectedProofId;var preview=proofPreview;proofDragging=false;picture.Capture=false;
@@ -672,6 +675,7 @@ namespace Doctracker.AddIn.UI
         {
             var surface=(PictureBox)sender;
             var number=(int)surface.Tag+1;
+            if(PaintTableGrid(e.Graphics,surface.Size,number))return;
             var active=ReferenceEquals(surface,picture);
             var preview=active?commentPreview:null;
             DocumentOverlay.Draw(e.Graphics, surface.Size, document, number,preview);

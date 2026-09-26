@@ -194,37 +194,31 @@ namespace Doctracker.AddIn.UI
                 if(doc==null)return;
                 var targets=cells.LinkedCells(workbook).Where(cell=>cells.GetSnipIds(cell).Contains(id)).ToList();
                 foreach(var target in targets)ExcelCellGateway.ValidateWritable(target);
-                var preserve=snip.Type==SnipType.Validation || snip.Type==SnipType.Exception;
                 // A changed cell/formula is not silently overwritten by moving its proof.
-                if(!preserve && targets.Any(target=>CellChangedSinceSnip(target,snip)) &&
+                if(targets.Any(target=>CellChangedSinceSnip(target,snip)) &&
                     MessageBox.Show(this,"La valeur ou la formule liée a été modifiée. La remplacer par la nouvelle extraction ?","Modifier le snip",MessageBoxButtons.YesNo)!=DialogResult.Yes)return;
-                BeginOperation();SetStatus(preserve?"Mise à jour de la zone…":"Lecture de la nouvelle zone…");
-                var raw=snip.RawText;
-                if(!preserve)
+                BeginOperation();SetStatus("Lecture de la nouvelle zone…");
+                var recognized=ExtractIndexedSelection(doc,snip.PageNumber,zone);
+                if(recognized==null)
                 {
-                    var recognized=ExtractIndexedSelection(doc,snip.PageNumber,zone);
-                    if(recognized==null)
-                    {
-                        var path=canvas.CurrentPath;
-                        var page=await System.Threading.Tasks.Task.Run(()=>DocumentIndexer.ReadNativePage(path,snip.PageNumber)).OnUi(this);
-                        operation.Token.ThrowIfCancellationRequested();
-                        recognized=ExtractPageSelection(page,zone);
-                    }
-                    if(recognized==null)
-                    {
-                        SetStatus("Reconnaissance de la nouvelle zone…");
-                        var sourcePath=canvas.CurrentPath;var token=operation.Token;var sourcePage=snip.PageNumber;
-                        recognized=await System.Threading.Tasks.Task.Run(()=>ocr.RecognizeRegion(sourcePath,sourcePage,zone,false,token)).OnUi(this);
-                    }
-                    raw=snip.Type==SnipType.Sum?SumSourceText(recognized):recognized.Text;
+                    var path=canvas.CurrentPath;
+                    var page=await System.Threading.Tasks.Task.Run(()=>DocumentIndexer.ReadNativePage(path,snip.PageNumber)).OnUi(this);
+                    operation.Token.ThrowIfCancellationRequested();
+                    recognized=ExtractPageSelection(page,zone);
                 }
+                if(recognized==null)
+                {
+                    SetStatus("Reconnaissance de la nouvelle zone…");
+                    var sourcePath=canvas.CurrentPath;var token=operation.Token;var sourcePage=snip.PageNumber;
+                    recognized=await System.Threading.Tasks.Task.Run(()=>ocr.RecognizeRegion(sourcePath,sourcePage,zone,false,token)).OnUi(this);
+                }
+                var raw=snip.Type==SnipType.Sum?SumSourceText(recognized):recognized.Text;
                 operation.Token.ThrowIfCancellationRequested();EnsureActiveWorkbook();
                 foreach(var target in targets)snapshots.Add(cells.Snapshot(target));
                 application.EnableEvents=false;
                 context.Snips.UpdateGeometry(context.State,id,new NormalizedRectangle(zone.X,zone.Y,zone.Width,zone.Height),raw,Environment.UserName,updated=>{
                     foreach(var target in targets)
                     {
-                        if(preserve){cells.AttachProof(target,updated,doc,true);continue;}
                         var linked=cells.GetSnipIds(target).Select(key=>context.State.Snips.FirstOrDefault(s=>s.Id==key)).Where(s=>s!=null).ToList();
                         cells.WriteSnip(target,updated,doc,true);
                         if(updated.Type==SnipType.Sum && linked.All(s=>s.Type==SnipType.Sum))

@@ -23,10 +23,11 @@ namespace Doctracker.Core.Services
         public string Parse(SnipType type, string rawText)
         {
             var text = (rawText ?? string.Empty).Trim();
-            if (type == SnipType.Validation || type == SnipType.Exception) return text;
             if (text.Length == 0) throw new FormatException("Aucun texte reconnu dans cette zone. Agrandissez la sélection.");
             switch (type)
             {
+                case SnipType.Validation:
+                case SnipType.Exception:
                 case SnipType.Text: return Regex.Replace(text, @"\s+", " ");
                 case SnipType.Number: return Format(ParseNumber(text));
                 case SnipType.Date: return ParseDate(text).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);

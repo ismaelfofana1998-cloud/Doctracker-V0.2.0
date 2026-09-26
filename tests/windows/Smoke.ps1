@@ -339,6 +339,9 @@ public static class HeartbeatChild {
         if($literal.Count -eq 0 -or !$literal[0].HasLocation -or $matched.Count -eq 0 -or !$matched[0].HasLocation){throw "Native embedded reference not found with position: $query"}
     }
     Write-Host 'PASS: native PDF embedded numeric references and split glyphs, shared search/matching, no redundant recovery copy'
+    Add-Type -Path (Join-Path $PSScriptRoot 'TableEditorProbe.cs') -ReferencedAssemblies (Join-Path $root 'Doctracker.Core.dll'),'System.Drawing.dll','System.Windows.Forms.dll','System.Core.dll'
+    Write-Host ([TableEditorProbe]::Run($assembly,$pdfPath,$nativePage,$previewDirectory))
+
     [IO.File]::WriteAllBytes($store.IndexPath($document.IndexKey),[byte[]]@(1,2,3))
     $freshStore=New-Object Doctracker.Core.Services.ProjectStore $store.ProjectDirectory
     $freshState=$freshStore.LoadOrCreate('')

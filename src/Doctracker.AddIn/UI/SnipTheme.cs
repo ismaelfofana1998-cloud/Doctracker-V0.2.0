@@ -34,7 +34,7 @@ namespace Doctracker.AddIn.UI
                 case SnipType.Sum: return "Somme";
                 case SnipType.Table: return "Tableau";
                 case SnipType.Validation: return "Validation";
-                default: return "Exception";
+                default: return "Anomalie";
             }
         }
         public static Color Tint(SnipType type)

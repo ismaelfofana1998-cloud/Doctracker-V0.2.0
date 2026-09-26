@@ -45,7 +45,7 @@ namespace Doctracker.AddIn.Ribbon
         <group id='SnipGroup' label='Snips'>
           <toggleButton id='TextSnip' getImage='GetImage' label='Texte' onAction='TextSnip_OnAction' getPressed='TextSnip_GetPressed' size='large'/>
           <toggleButton id='ValidationSnip' getImage='GetImage' label='Validation' onAction='ValidationSnip_OnAction' getPressed='ValidationSnip_GetPressed' size='large'/>
-          <toggleButton id='ExceptionSnip' getImage='GetImage' label='Exception' onAction='ExceptionSnip_OnAction' getPressed='ExceptionSnip_GetPressed' size='large'/>
+          <toggleButton id='ExceptionSnip' getImage='GetImage' label='Anomalie' onAction='ExceptionSnip_OnAction' getPressed='ExceptionSnip_GetPressed' size='large'/>
           <toggleButton id='NumberSnip' getImage='GetImage' label='Nombre' onAction='NumberSnip_OnAction' getPressed='NumberSnip_GetPressed' size='large'/>
           <toggleButton id='DateSnip' getImage='GetImage' label='Date' onAction='DateSnip_OnAction' getPressed='DateSnip_GetPressed' size='large'/>
           <toggleButton id='SumSnip' getImage='GetImage' label='Somme' onAction='SumSnip_OnAction' getPressed='SumSnip_GetPressed' size='large'/>

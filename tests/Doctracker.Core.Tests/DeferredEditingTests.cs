@@ -40,6 +40,8 @@ namespace Doctracker.Core.Tests
             store.Flush(state);var loaded=new ProjectStore(root).LoadOrCreate("");Assert.Single(OccurrenceSearch.Find(loaded,"123"));
         }
         [Theory] [InlineData(SnipType.Text,"Nouveau texte","Nouveau texte")] [InlineData(SnipType.Sum,"10  25","35")] [InlineData(SnipType.Number,"125,50","125.5")]
+        [InlineData(SnipType.Validation,"BL 00123\nLivré","BL 00123 Livré")]
+        [InlineData(SnipType.Exception,"Quantité 10\nau lieu de 20","Quantité 10 au lieu de 20")]
         public void Resizing_updates_value_without_changing_link_identity_and_resets_review(SnipType type,string text,string expected)
         {
             var store=new ProjectStore(root){DeferMetadataWrites=true};var state=new ProjectState();var doc=new DocumentRecord();state.Documents.Add(doc);

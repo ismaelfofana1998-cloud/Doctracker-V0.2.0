@@ -41,29 +41,24 @@ namespace Doctracker.AddIn.Excel
 
         public void WriteSnip(ExcelInterop.Range target, SnipRecord snip, DocumentRecord document, bool appendProof = false)
         {
-            if ((snip.Type == SnipType.Validation || snip.Type == SnipType.Exception) && target.Value2 == null && !(bool)target.HasFormula)
-                target.Value2 = snip.Type == SnipType.Validation ? "Validation" : "Exception";
-            if (snip.Type != SnipType.Validation && snip.Type != SnipType.Exception)
+            if (snip.Type == SnipType.Number || snip.Type == SnipType.Sum)
             {
-                if (snip.Type == SnipType.Number || snip.Type == SnipType.Sum)
-                {
-                    target.Value2 = double.Parse(snip.ExtractedValue, CultureInfo.InvariantCulture);
-                    target.NumberFormat = "#,##0.00";
-                }
-                else if (snip.Type == SnipType.Date)
-                {
-                    var date = DateTime.ParseExact(snip.ExtractedValue, "yyyy-MM-dd", CultureInfo.InvariantCulture);
-                    // Value2 expects a serial, not a COM Date. Account for 1904 workbooks.
-                    var workbook = (ExcelInterop.Workbook)target.Worksheet.Parent;
-                    target.Value2 = date.ToOADate() - (workbook.Date1904 ? 1462 : 0);
-                    target.NumberFormat = "dd/mm/yyyy";
-                }
-                else
-                {
-                    // Prevent OCR content beginning with =,+,-,@ from becoming a formula.
-                    target.NumberFormat = "@";
-                    target.Value2 = snip.ExtractedValue;
-                }
+                target.Value2 = double.Parse(snip.ExtractedValue, CultureInfo.InvariantCulture);
+                target.NumberFormat = "#,##0.00";
+            }
+            else if (snip.Type == SnipType.Date)
+            {
+                var date = DateTime.ParseExact(snip.ExtractedValue, "yyyy-MM-dd", CultureInfo.InvariantCulture);
+                // Value2 expects a serial, not a COM Date. Account for 1904 workbooks.
+                var workbook = (ExcelInterop.Workbook)target.Worksheet.Parent;
+                target.Value2 = date.ToOADate() - (workbook.Date1904 ? 1462 : 0);
+                target.NumberFormat = "dd/mm/yyyy";
+            }
+            else
+            {
+                // Prevent OCR content beginning with =,+,-,@ from becoming a formula.
+                target.NumberFormat = "@";
+                target.Value2 = snip.ExtractedValue;
             }
             AttachProof(target, snip, document, appendProof);
         }
