@@ -137,7 +137,7 @@ namespace Doctracker.AddIn.Excel
 
         public static string MatchingText(ExcelInterop.Range cell)
         {
-            var displayed=Convert.ToString(cell.Text,CultureInfo.CurrentCulture)??"";
+            var displayed=Convert.ToString((object)cell.Text,CultureInfo.CurrentCulture)??"";
             if(displayed.Length>0 && displayed.All(c=>c=='#'))
                 throw new InvalidOperationException("Une cellule de recherche affiche ###. Élargissez sa colonne pour utiliser son texte affiché.");
             return displayed;
