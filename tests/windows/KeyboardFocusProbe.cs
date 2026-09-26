@@ -30,7 +30,7 @@ public static class KeyboardFocusProbe
             string childClass=ClassName(sheet.Handle);
             Func<bool,bool> giveBack=empty=>(bool)handoff.Invoke(null,new object[]{pane,host.Handle,childClass,empty});
             Func<IntPtr> remember=()=>(IntPtr)capture.Invoke(null,new object[]{host.Handle,childClass});
-            Func<IntPtr,bool> recover=saved=>(bool)restore.Invoke(null,new object[]{pane,host.Handle,saved});
+            Func<IntPtr,bool> recover=focusToRestore=>(bool)restore.Invoke(null,new object[]{pane,host.Handle,focusToRestore});
 
             paneInput.Focus();Require(GetFocus()==paneInput.Handle,"pane setup");
             Require(giveBack(false),"handoff before disabling PDF");
