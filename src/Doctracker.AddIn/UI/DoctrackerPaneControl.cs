@@ -236,15 +236,23 @@ namespace Doctracker.AddIn.UI
         private async Task CaptureSnipAsync(SnipType type)
         {
             if (context.IsBusy) return;
+            var sourceWindow=IntPtr.Zero;var keyboardReturned=false;
             try
             {
                 EnsureProject();
                 var document = SelectedDocument;
                 if (document == null || !canvas.HasSelection) throw new InvalidOperationException("Dessinez une zone sur une pièce.");
                 var target = cells.GetSingleTarget();
+                object originalFormula=target.Formula;
+                sourceWindow=new IntPtr(application.ActiveWindow.Hwnd);
                 var pageNumber = canvas.CurrentPageNumber;
                 var rectangle = canvas.GetNormalizedSelection();
                 DiagnosticLog.Write("SnipStart "+type+" page="+pageNumber);
+                Globals.ThisAddIn?.Controller?.CancelPendingNavigation();
+                // Do this before disabling the focused PDF surface: otherwise the first
+                // key can reach Office's task-pane/ribbon navigation instead of the cell.
+                keyboardReturned=WorksheetKeyboardFocus.ReturnToWorksheet(this,sourceWindow);
+                DiagnosticLog.Write("SnipKeyboardReturn start="+keyboardReturned);
                 BeginOperation();
                 PageTextRecord recognized;
                 SetStatus("Extraction de la zone…");
@@ -266,7 +274,11 @@ namespace Doctracker.AddIn.UI
                     recognized = await Task.Run(() => ocr.RecognizeRegion(sourcePath,pageNumber,rectangle,type==SnipType.Table,token)).OnUi(this);
                 }
                 operation.Token.ThrowIfCancellationRequested();
+                if(!application.Ready)
+                {SetStatus("Saisie Excel en cours : extraction non insérée. Terminez la saisie avant de refaire le snip.");return;}
                 EnsureActiveWorkbook();
+                if(!Equals(originalFormula,(object)target.Formula))
+                {SetStatus("La cellule a été modifiée pendant la reconnaissance. Votre saisie est conservée.");return;}
                 var writes = new List<PendingWrite>();
                 var blankTableCells=new List<ExcelInterop.Range>();
                 if (type == SnipType.Table)
@@ -330,10 +342,23 @@ namespace Doctracker.AddIn.UI
                     cells.GetSingleTarget().Address[true, true, ExcelInterop.XlReferenceStyle.xlA1, true] ==
                     target.Address[true, true, ExcelInterop.XlReferenceStyle.xlA1, true])
                     ((ExcelInterop.Range)target.Offset[type == SnipType.Table ? writes.Max(w => w.Target.Row) - target.Row + 1 : 1, 0]).Select();
+                RefreshSearchCell();
             }
             catch (OperationCanceledException) { SetStatus("Extraction annulée."); }
             catch (Exception exception) { ShowError(exception); }
-            finally { EndOperation(); }
+            finally
+            {
+                EndOperation();
+                // Re-enabling the pane or closing the table/overwrite dialog can restore
+                // its old active control. Finish the handoff in this same UI turn.
+                try
+                {
+                    if(sourceWindow!=IntPtr.Zero && !IsDisposed && application.Ready &&
+                        Equals(application.ActiveWorkbook,workbook) && new IntPtr(application.ActiveWindow.Hwnd)==sourceWindow)
+                        DiagnosticLog.Write("SnipKeyboardReturn end="+WorksheetKeyboardFocus.ReturnToWorksheet(this,sourceWindow,keyboardReturned));
+                }
+                catch(System.Runtime.InteropServices.COMException){ /* Leave an ongoing Excel edit alone. */ }
+            }
         }
 
         public async void SearchSelection()

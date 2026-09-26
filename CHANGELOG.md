@@ -1,3 +1,11 @@
+# 0.9.9 — Clavier après un snip
+
+- Le saut automatique à la cellule suivante est conservé.
+- Le clavier est rendu à la feuille avant de désactiver le lecteur pendant l’extraction, puis à la fin du snip si le focus appartient encore au panneau.
+- Au retour sur une cellule, la navigation automatique vers sa preuve conserve le focus exact de la feuille. Elle est ignorée si le clavier est déjà dans un éditeur ou une autre fenêtre ; un panneau déjà visible n’est plus réactivé inutilement.
+- Une modification de la cellule pendant l’OCR est conservée au lieu d’être écrasée par le résultat tardif.
+- Tests natifs Windows x86/x64 du focus et de la première frappe. Le parcours complet avec Excel doit aussi être vérifié sur le poste utilisateur.
+
 # 0.9.8 — Réinstallation et réglage OCR
 
 - Corrige l’enregistrement du nombre de moteurs sous Windows PowerShell lorsque le fichier de réglages existe déjà (`File.Replace` recevait une chaîne vide au lieu de null pour le chemin de sauvegarde).

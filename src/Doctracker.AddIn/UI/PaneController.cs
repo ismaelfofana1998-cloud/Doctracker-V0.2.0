@@ -87,13 +87,20 @@ namespace Doctracker.AddIn.UI
         private void NavigateSelection(ExcelInterop.Range target)
         {
             // Excel fires this for mouse clicks AND keyboard navigation. Never steal focus.
+            var windowHandle=IntPtr.Zero;var worksheetFocus=IntPtr.Zero;
+            DoctrackerPaneControl refreshedPane=null;
             try
             {
                 var book = application.ActiveWorkbook;
                 if (book == null) return;
                 var window = application.ActiveWindow;
+                if(window==null)return;
+                windowHandle=new IntPtr(window.Hwnd);
+                worksheetFocus=WorksheetKeyboardFocus.CaptureWorksheet(windowHandle);
+                if(worksheetFocus==IntPtr.Zero)return;
                 WindowPane existing;
-                if(window!=null && panes.TryGetValue(window.Hwnd,out existing))existing.Control.SyncSearchFromCell(target);
+                if(panes.TryGetValue(window.Hwnd,out existing))
+                {refreshedPane=existing.Control;existing.Control.SyncSearchFromCell(target);}
                 if(IsBusy(book))return;
                 if (target == null || target.Cells.CountLarge != 1 ||
                     new Excel.ExcelCellGateway(application).GetSnipIds(target).Count==0)
@@ -102,11 +109,16 @@ namespace Doctracker.AddIn.UI
                     return;
                 }
                 var entry = Current(false);
+                refreshedPane=entry.Control;
                 entry.Control.SyncSearchFromCell(target);
-                if (entry.Control.TryNavigateFromCell(target)) entry.Pane.Visible = true;
+                if (entry.Control.TryNavigateFromCell(target) && !entry.Pane.Visible) entry.Pane.Visible = true;
             }
             catch (System.Runtime.InteropServices.COMException) { /* Excel can be editing or closing. */ }
             catch (Exception exception) { System.Diagnostics.Trace.WriteLine("Doctracker selection: " + exception.Message); }
+            finally
+            {
+                WorksheetKeyboardFocus.RestoreAfterPaneRefresh(refreshedPane,windowHandle,worksheetFocus);
+            }
         }
 
         public void BeforeSave(ExcelInterop.Workbook workbook,bool saveAs) { if(contexts.TryGetValue(workbook,out var context))context.BeforeSave(saveAs); }

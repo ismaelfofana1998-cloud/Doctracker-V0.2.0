@@ -415,6 +415,8 @@ public static class HeartbeatChild {
     Write-Host 'PASS: snip sum preserves separate numeric columns'
     # Office can call us without a UI SynchronizationContext: success, failure and
     # cancellation must all resume on the owner thread before touching GDI/Excel.
+    Add-Type -Path (Join-Path $PSScriptRoot 'KeyboardFocusProbe.cs') -ReferencedAssemblies 'System.Windows.Forms.dll','System.Drawing.dll','System.Core.dll'
+    Write-Host ([KeyboardFocusProbe]::Run($assembly))
     Add-Type -Path (Join-Path $PSScriptRoot 'UiContinuationProbe.cs') -ReferencedAssemblies 'System.Windows.Forms.dll','System.Core.dll'
     foreach($generic in @($false,$true)) {
         foreach($outcome in @('success','fault','cancel','completed')) {
