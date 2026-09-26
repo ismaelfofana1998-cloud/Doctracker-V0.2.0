@@ -493,6 +493,19 @@ public static class HeartbeatChild {
     $settingsPath=$settingsType.GetProperty('SettingsPath',$settingsFlags).GetValue($null,$null)
     $previousSettings=if(Test-Path $settingsPath){[IO.File]::ReadAllBytes($settingsPath)}else{$null}
     try {
+        # First install, followed by the user's failing case: replace an existing 10.
+        if(Test-Path $settingsPath){Remove-Item -LiteralPath $settingsPath}
+        Save-DoctrackerOcrWorkers 10
+        Save-DoctrackerOcrWorkers 10
+        if([IO.File]::ReadAllText($settingsPath) -ne '10'){throw 'Reinstall lost the existing OCR worker setting.'}
+        Save-DoctrackerOcrWorkers 6
+        if([IO.File]::ReadAllText($settingsPath) -ne '6'){throw 'Reinstall did not update the OCR worker setting.'}
+        $locked=[IO.File]::Open($settingsPath,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None)
+        $saveRejected=$false
+        try {Save-DoctrackerOcrWorkers 4}catch{$saveRejected=$true}finally{$locked.Dispose()}
+        if(!$saveRejected -or [IO.File]::ReadAllText($settingsPath) -ne '6'){throw 'Failed settings replacement did not preserve the previous choice.'}
+        if(@(Get-ChildItem -LiteralPath (Split-Path $settingsPath) -Filter 'ocr-workers.txt.*.tmp').Count -ne 0){throw 'Settings replacement leaked a temporary file.'}
+        Write-Host 'PASS: first install, reinstall with existing OCR setting, changed choice, failed replacement rollback and cleanup'
         Save-DoctrackerOcrWorkers 1
         if($settingsType.GetMethod('LoadWorkers',$settingsFlags).Invoke($null,@()) -ne 1){throw 'Installer worker choice was not loaded by the add-in.'}
         $settingsType.GetMethod('SaveWorkers',$settingsFlags).Invoke($null,[object[]]@(2))

@@ -103,5 +103,9 @@ if ($process.ExitCode -ne 0) {
 }
 
 Write-Host ""
-Save-DoctrackerOcrWorkers $ocrWorkerCount
+try {
+    Save-DoctrackerOcrWorkers $ocrWorkerCount
+} catch {
+    Write-Warning "L'installateur s'est termine, mais le choix des moteurs OCR n'a pas pu etre enregistre. Reglez-le dans Doctracker > Reglages OCR. Detail : $($_.Exception.GetBaseException().Message)"
+}
 Write-Host "Installation terminee. Fermez puis rouvrez Excel." -ForegroundColor Green

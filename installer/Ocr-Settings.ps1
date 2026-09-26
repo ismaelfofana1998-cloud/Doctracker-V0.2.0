@@ -35,6 +35,8 @@ function Save-DoctrackerOcrWorkers {
     $temporary=$path+'.'+[Guid]::NewGuid().ToString('N')+'.tmp'
     try {
         [IO.File]::WriteAllText($temporary,$Count.ToString())
-        if([IO.File]::Exists($path)){[IO.File]::Replace($temporary,$path,$null)}else{[IO.File]::Move($temporary,$path)}
+        # Windows PowerShell converts $null to an empty string for a .NET string
+        # parameter. File.Replace requires a true null when no backup is requested.
+        if([IO.File]::Exists($path)){[IO.File]::Replace($temporary,$path,[NullString]::Value)}else{[IO.File]::Move($temporary,$path)}
     } finally {if([IO.File]::Exists($temporary)){[IO.File]::Delete($temporary)}}
 }

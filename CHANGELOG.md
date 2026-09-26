@@ -1,3 +1,9 @@
+# 0.9.8 — Réinstallation et réglage OCR
+
+- Corrige l’enregistrement du nombre de moteurs sous Windows PowerShell lorsque le fichier de réglages existe déjà (`File.Replace` recevait une chaîne vide au lieu de null pour le chemin de sauvegarde).
+- Un échec de sauvegarde du réglage après la sortie réussie de setup.exe affiche un avertissement ciblé au lieu d’annoncer un échec global de l’installation.
+- Tests Windows : première installation, réinstallation avec 10 moteurs, changement du choix, fichier verrouillé et nettoyage des temporaires.
+
 # 0.9.7 — Recherche synchronisée, grille sur PDF et anomalies
 
 - La recherche suit la cellule active et conserve les saisies manuelles sur une même cellule.
